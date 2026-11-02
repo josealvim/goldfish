@@ -380,6 +380,19 @@ export class MemoryStore {
     }
   }
 
+  private copyCitations(nodeID: string, fromVersion: number, toVersion: number): void {
+    const now = this.now();
+    this.db
+      .prepare(
+        `INSERT INTO citations
+          (node_id, node_version, source_id, locator_json, excerpt, excerpt_hash, observed_at)
+         SELECT node_id, ?, source_id, locator_json, excerpt, excerpt_hash, ?
+         FROM citations
+         WHERE node_id = ? AND node_version = ?`,
+      )
+      .run(toVersion, now, nodeID, fromVersion);
+  }
+
   private resolveCitations(citations: CitationInput[]): ResolvedCitation[] {
     return citations.map((input) => {
       const sourceID = `src_${shortHash(`${input.type}:${input.locator}`)}`;
@@ -1331,10 +1344,45 @@ export class MemoryStore {
       if (!row) return undefined;
       const current = this.rowToNode(row);
       const citations = this.getCitations(current.id, current.version);
-      const nextBasis =
-        input.as === "cited" && citations.length === 0
-          ? "verified"
-          : input.as ?? (citations.length ? "cited" : "verified");
+      if (input.as === "cited") {
+        if (citations.length === 0) {
+          throw new Error("Cannot confirm as cited without a citation.");
+        }
+        if (citations.some((citation) => citation.validation === "missing")) {
+          throw new Error("Cannot confirm as cited while a cited file is missing.");
+        }
+      }
+      if (input.as === "derived") {
+        const premiseEdges = this.getEdges(id).filter(
+          (edge) => edge.type === "derived_from" && edge.fromID === id,
+        );
+        if (!premiseEdges.length) {
+          throw new Error("Cannot confirm as derived without a derived_from premise.");
+        }
+        for (const edge of premiseEdges) {
+          const premiseRow = this.getRow(edge.toID);
+          if (!premiseRow) throw new Error(`Derived premise ${edge.toID} does not exist.`);
+          const premise = this.rowToNode(premiseRow);
+          if (premise.status !== "active") {
+            throw new Error(`Derived premise ${premise.id} is ${premise.status}.`);
+          }
+          if (premise.basis === "inferred") {
+            throw new Error(`Derived premise ${premise.id} is inferred.`);
+          }
+          if (premise.basis === "derived" && premise.verificationState !== "confirmed") {
+            throw new Error(`Derived premise ${premise.id} is unconfirmed.`);
+          }
+          if (
+            premise.verificationState === "rejected" ||
+            premise.verificationState === "needs_human"
+          ) {
+            throw new Error(
+              `Derived premise ${premise.id} is ${premise.verificationState}.`,
+            );
+          }
+        }
+      }
+      const nextBasis = input.as ?? (citations.length ? "cited" : "verified");
       const now = this.now();
       const metadata = { ...current.metadata };
       delete metadata.ratificationSuggested;
@@ -1342,7 +1390,7 @@ export class MemoryStore {
         ...current,
         basis: nextBasis,
         verificationState: "confirmed",
-        status: current.status === "superseded" || current.status === "archived" ? "active" : "active",
+        status: "active",
         confidence: Math.max(current.confidence, nextBasis === "verified" ? 0.9 : 0.7),
         version: current.version + 1,
         updatedAt: now,
@@ -1353,6 +1401,7 @@ export class MemoryStore {
       });
       this.updateNodeRow(next);
       this.insertVersion(next, input.reason ?? "confirmed", []);
+      this.copyCitations(current.id, current.version, next.version);
       this.recordEvent(input.author, "confirm", next.id, {
         from: current.verificationState,
         basis: nextBasis,
@@ -1368,6 +1417,11 @@ export class MemoryStore {
       if (!row) return undefined;
       const current = this.rowToNode(row);
       const now = this.now();
+      const metadata: Record<string, unknown> = {
+        ...current.metadata,
+        rejectionReason: input.reason,
+      };
+      delete metadata.ratificationSuggested;
       const next: MemoryNode = {
         ...current,
         verificationState: "rejected",
@@ -1376,10 +1430,11 @@ export class MemoryStore {
         updatedAt: now,
         autoInjectEligible: false,
         author: input.author,
-        metadata: { ...current.metadata, rejectionReason: input.reason },
+        metadata,
       };
       this.updateNodeRow(next);
       this.insertVersion(next, "rejected", []);
+      this.copyCitations(current.id, current.version, next.version);
       this.recordEvent(input.author, "reject", next.id, { reason: input.reason });
       return next;
     });

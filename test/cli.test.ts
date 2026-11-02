@@ -77,7 +77,7 @@ test("CLI end-to-end: seed, recall, eval, export/import, review, and audit", { t
       "confirm",
       "gotcha/inferred-claims-must-not-auto-inject",
       "--as",
-      "cited",
+      "verified",
       "--db",
       db,
       "--project",

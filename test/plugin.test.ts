@@ -214,6 +214,7 @@ test("registers agent tools and executes recall/get", async () => {
       "archive",
       "audit",
       "cite",
+      "confirm",
       "conflict",
       "conflicts",
       "get",
@@ -222,6 +223,7 @@ test("registers agent tools and executes recall/get", async () => {
       "list",
       "neighbors",
       "recall",
+      "reject",
       "remember",
       "review",
       "status",
@@ -394,6 +396,129 @@ test("memory_conflicts proposes a conflict and memory_admin.conflict confirms it
       }),
     },
   );
+});
+
+test("memory_admin.confirm and reject complete the human review loop", async () => {
+  await withPlugin(async (fake, runtime) => {
+    const cited = runtime.store.remember(
+      {
+        kind: "decision",
+        title: "Review cited claim",
+        body: "A reviewed claim with a source.",
+        basis: "inferred",
+        citations: [{ type: "file", locator: "docs/decisions.md" }],
+        metadata: {
+          ratificationSuggested: { basis: "verified", reason: "Model suggested it." },
+        },
+      },
+      { author: { type: "system", id: "test" } },
+    ).node!;
+    const tested = runtime.store.remember(
+      {
+        kind: "decision",
+        title: "Review tested claim",
+        body: "A reviewed claim with a test.",
+        basis: "inferred",
+        citations: [{ type: "test", locator: "npm test" }],
+      },
+      { author: { type: "system", id: "test" } },
+    ).node!;
+    const rejected = runtime.store.remember(
+      {
+        kind: "gotcha",
+        title: "Review rejected claim",
+        body: "A claim that should be rejected.",
+        basis: "inferred",
+        citations: [{ type: "file", locator: "docs/decisions.md" }],
+        metadata: {
+          ratificationSuggested: { basis: "verified", reason: "Model suggested it." },
+        },
+      },
+      { author: { type: "system", id: "test" } },
+    ).node!;
+    await registerTools(fake.ctx, runtime);
+
+    const review = fake.tools.get("review")!;
+    const reviewed = await review.execute({}, toolContext);
+    assert.match(String(reviewed.content), /Next: memory_admin\.confirm/);
+
+    const confirm = fake.tools.get("confirm")!;
+    const citedResult = await confirm.execute(
+      { id: cited.id, as: "cited", reason: "Source checked by a human." },
+      toolContext,
+    );
+    assert.match(String(citedResult.content), /Basis: cited/);
+    const citedNode = runtime.store.get(cited.id)!.node;
+    assert.equal(citedNode.basis, "cited");
+    assert.equal(citedNode.metadata.ratificationSuggested, undefined);
+    assert.equal(runtime.store.get(cited.id)!.citations.length, 1);
+
+    const verifiedResult = await confirm.execute(
+      { id: tested.id, as: "verified", reason: "The test passes." },
+      toolContext,
+    );
+    assert.match(String(verifiedResult.content), /Basis: verified/);
+    const verifiedDetail = runtime.store.get(tested.id)!;
+    assert.equal(verifiedDetail.node.basis, "verified");
+    assert.equal(verifiedDetail.citations.length, 2);
+    assert.equal(verifiedDetail.citations.some((citation) => citation.type === "human"), true);
+    assert.equal(fake.permissions.length, 1);
+
+    const reject = fake.tools.get("reject")!;
+    const rejectedResult = await reject.execute(
+      { id: rejected.id, reason: "The source contradicts this claim." },
+      toolContext,
+    );
+    assert.match(String(rejectedResult.content), /Verification: rejected/);
+    const rejectedDetail = runtime.store.get(rejected.id)!;
+    assert.equal(rejectedDetail.node.verificationState, "rejected");
+    assert.equal(rejectedDetail.node.autoInjectEligible, false);
+    assert.equal(rejectedDetail.citations.length, 1);
+    assert.equal(rejectedDetail.node.metadata.ratificationSuggested, undefined);
+
+    const derivedBase = runtime.store.remember(
+      {
+        kind: "decision",
+        title: "Review derived premise",
+        body: "A cited premise.",
+        citations: [{ type: "file", locator: "docs/decisions.md" }],
+      },
+      { author: { type: "system", id: "test" } },
+    ).node!;
+    const derived = runtime.store.remember(
+      {
+        kind: "decision",
+        title: "Review derived claim",
+        body: "A claim derived from a cited premise.",
+        basis: "derived",
+        links: [{ to: derivedBase.id, type: "derived_from" }],
+      },
+      { author: { type: "system", id: "test" } },
+    ).node!;
+    const derivedResult = await confirm.execute(
+      { id: derived.id, as: "derived", reason: "The premise is cited and sound." },
+      toolContext,
+    );
+    assert.match(String(derivedResult.content), /Basis: derived/);
+    assert.equal(runtime.store.get(derived.id)!.node.basis, "derived");
+
+    const unsupported = runtime.store.remember(
+      {
+        kind: "gotcha",
+        title: "Review uncited claim",
+        body: "A claim without a citation.",
+        basis: "inferred",
+      },
+      { author: { type: "system", id: "test" } },
+    ).node!;
+    await assert.rejects(
+      confirm.execute(
+        { id: unsupported.id, as: "cited", reason: "No source." },
+        toolContext,
+      ),
+      /without a citation/,
+    );
+  });
 });
 
 test("memory_status reports onboarding progress through empty, recommended, partial, and complete", async () => {

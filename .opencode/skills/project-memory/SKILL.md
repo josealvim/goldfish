@@ -41,6 +41,8 @@ For precise changes, use the `memory_admin` namespace through `execute`:
 - `memory_admin.link` / `unlink` — adjust typed edges
 - `memory_admin.update` — change title, scope, or tags; the node ID and canonical
   key stay stable
+- `memory_admin.confirm` — confirm as `cited`, `derived`, or `verified` after review
+- `memory_admin.reject` — keep a claim in history but remove it from auto-injection
 - `memory_admin.archive` — soft-delete a node; history remains in `memory_get`
 - `memory_admin.conflict` — confirm or dismiss a proposed conflict after human review
 

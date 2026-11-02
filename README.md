@@ -43,7 +43,7 @@ No npm publish is required. The package is installed directly from Git.
 opencode plugin add github:josealvim/goldfish
 
 # Pin a release tag
-opencode plugin add github:josealvim/goldfish#v0.5.0
+opencode plugin add github:josealvim/goldfish#v0.6.0
 ```
 
 Or clone the repository and run the installer:
@@ -123,6 +123,12 @@ npm run memory -- recall "how does injection work?"
 | `memory_review` | Show the review queue, including proposed conflicts. |
 | `memory_audit` | Preview or run a sampled audit; record an external outcome. Conflicts are never auto-resolved. |
 
+`memory_admin.confirm` and `memory_admin.reject` complete the review loop.
+Confirm supports `cited`, `derived`, and `verified`. Confirming as `verified`
+requires explicit human instruction, is permission-gated, records a human
+citation, and clears the ratification suggestion. Rejection keeps the claim in
+history but removes it from auto-injection.
+
 `memory_admin.conflict` confirms or dismisses a proposed conflict. Confirming
 adds the `contradicts` edge and marks both sides disputed; dismissing leaves
 both claims untouched.
@@ -183,6 +189,8 @@ memory_verify { "ids": ["decision/example"] }
 memory_conflicts { "ids": ["decision/example"] }
 memory_audit { "mode": "candidates", "limit": 10 }
 memory_audit { "mode": "run", "limit": 10 }
+memory_admin.confirm { "id": "decision/example", "as": "verified", "reason": "Human checked the source." }
+memory_admin.reject { "id": "gotcha/example", "reason": "The current source contradicts this." }
 ```
 
 `memory_verify` runs deterministic checks first: citation existence and content
@@ -223,6 +231,8 @@ memory_admin.cite      add citations without rewriting the claim
 memory_admin.link      add or reactivate a typed edge
 memory_admin.unlink    retire an edge without deleting history
 memory_admin.update    change title, scope, or tags; the ID stays stable
+memory_admin.confirm   confirm as cited, derived, or verified after review
+memory_admin.reject    reject a claim and remove it from auto-injection
 memory_admin.archive   soft-delete; history remains in memory_get
 memory_admin.conflict  confirm or dismiss a proposed conflict
 ```
@@ -493,7 +503,7 @@ npm test
 npm run seed
 ```
 
-The 66 tests cover policy and glob matching, recall filters and budgets,
+The 67 tests cover policy and glob matching, recall filters and budgets,
 material revisions and supersession, multi-conflict forks, bounded source
 snapshots and redaction, citation freshness, derived cycles and premise
 soundness, verifier verdicts and caching, conflict candidate retrieval,
@@ -515,4 +525,6 @@ status, and CLI end-to-end and error paths.
 - Confirmed conflicts mark both sides disputed and are never auto-resolved.
   Discovered conflicts are proposals until a human confirms them.
 - Semantic verification is rejection-leaning and cannot promote to `verified`.
+- `memory_admin.confirm as="verified"` is explicit, permission-gated, and records
+  a human citation.
 - The plugin never bypasses normal edit, shell, or test permissions.

@@ -8,7 +8,8 @@ This project uses `goldfish`, a local project knowledge base.
   the paths you expect to touch.
 - If memory is empty, suggest `/goldfish-onboard` before a large planning task.
 - Use `memory_health` and `memory_list` for maintenance; precise edits go through
-  the `memory_admin` namespace (cite, link, unlink, update, archive, conflict).
+  the `memory_admin` namespace (confirm, reject, cite, link, unlink, update,
+  archive, conflict).
 - Use `memory_review`, `memory_verify`, `memory_conflicts`, and `memory_audit`
   before relying on unverified, disputed, or stale claims.
 - Conflict discovery is proposal-only. Confirm a proposal with

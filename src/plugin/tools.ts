@@ -110,6 +110,17 @@ interface ArchiveInput {
   reason: string;
 }
 
+interface ConfirmInput {
+  id: string;
+  as: "cited" | "derived" | "verified";
+  reason: string;
+}
+
+interface RejectInput {
+  id: string;
+  reason: string;
+}
+
 interface VerifyInput {
   ids?: string[];
   scope?: string;
@@ -359,6 +370,27 @@ const updateSchema = {
 } as const;
 
 const archiveSchema = {
+  type: "object",
+  properties: {
+    id: { type: "string" },
+    reason: { type: "string" },
+  },
+  required: ["id", "reason"],
+  additionalProperties: false,
+} as const;
+
+const confirmSchema = {
+  type: "object",
+  properties: {
+    id: { type: "string" },
+    as: { type: "string", enum: ["cited", "derived", "verified"] },
+    reason: { type: "string" },
+  },
+  required: ["id", "as", "reason"],
+  additionalProperties: false,
+} as const;
+
+const rejectSchema = {
   type: "object",
   properties: {
     id: { type: "string" },
@@ -1151,7 +1183,7 @@ export async function registerTools(ctx: PluginContext, runtime: Runtime): Promi
     editor.namespace({
       name: "memory_admin",
       description:
-        "Precise memory maintenance: cite, link, unlink, update, archive, audit, and conflict review.",
+        "Precise memory maintenance: confirm, reject, cite, link, unlink, update, archive, audit, and conflict review.",
     });
 
     editor.add({
@@ -1228,6 +1260,119 @@ export async function registerTools(ctx: PluginContext, runtime: Runtime): Promi
         return {
           content: detail ? formatNode(detail) : `Updated ${node.id}.`,
           metadata: { nodeID: node.id, title: node.title },
+        };
+      },
+    });
+
+    editor.add({
+      name: "confirm",
+      description:
+        "Confirm a reviewed claim as cited, derived, or verified. Use only on explicit human instruction. " +
+        "Verified confirmation records a human citation and is permission-gated. Confirmations clear the " +
+        "ratification suggestion and preserve citations in the new version.",
+      input: confirmSchema,
+      options: { namespace: "memory_admin", codemode: true },
+      execute: async (raw, context) => {
+        const input = raw as unknown as ConfirmInput;
+        await assertWrite(
+          ctx,
+          runtime,
+          context,
+          "memory.confirm",
+          [input.id],
+          input.as === "verified",
+        );
+        const detail = runtime.store.get(input.id);
+        if (!detail) throw new Error(`No memory node found for ${input.id}`);
+        if (detail.node.status === "archived" || detail.node.status === "superseded") {
+          throw new Error(`Cannot confirm a ${detail.node.status} claim.`);
+        }
+        if (input.as === "cited") {
+          if (!detail.citations.length) {
+            throw new Error("Cannot confirm as cited without a citation.");
+          }
+          if (detail.citations.some((citation) => citation.validation === "missing")) {
+            throw new Error("Cannot confirm as cited while a cited file is missing.");
+          }
+        }
+        if (input.as === "derived") {
+          const packet = buildVerificationPacket(runtime.store, input.id, {
+            readSources: false,
+            maxCitations: 5,
+            maxPremises: 10,
+            maxConflicts: 0,
+            maxContext: 0,
+            maxHistory: 0,
+          });
+          if (!packet?.premises.length) {
+            throw new Error("Cannot confirm as derived without a derived_from premise.");
+          }
+          const unsound = packet.premises.filter((premise) => !premise.sound);
+          if (unsound.length) {
+            throw new Error(
+              `Cannot confirm as derived with unsound premises: ${unsound
+                .map((premise) => premise.node.id)
+                .join(", ")}`,
+            );
+          }
+          if (
+            packet.deterministic.reasons.some((reason) =>
+              reason.includes("circular derived_from chain"),
+            )
+          ) {
+            throw new Error("Cannot confirm as derived with a circular derived_from chain.");
+          }
+        }
+        if (input.as === "verified") {
+          runtime.store.cite(
+            input.id,
+            [
+              {
+                type: "human",
+                locator: `session:${context.sessionID}${context.messageID ? `/${context.messageID}` : ""}`,
+                excerpt: `Human ratification: ${input.reason}`,
+              },
+            ],
+            writeContext(context),
+          );
+        }
+        const node = runtime.store.confirm(input.id, {
+          as: input.as,
+          reason: input.reason,
+          author: writeContext(context).author,
+        });
+        if (!node) throw new Error(`No memory node found for ${input.id}`);
+        const updated = runtime.store.get(node.id);
+        return {
+          content: updated ? formatNode(updated) : `Confirmed ${node.id} as ${node.basis}.`,
+          metadata: { nodeID: node.id, basis: node.basis, status: node.status },
+        };
+      },
+    });
+
+    editor.add({
+      name: "reject",
+      description:
+        "Reject a reviewed claim. It stays available through memory_get but is removed from auto-injection. " +
+        "Use only after human review or a failed verification.",
+      input: rejectSchema,
+      options: { namespace: "memory_admin", codemode: true },
+      execute: async (raw, context) => {
+        const input = raw as unknown as RejectInput;
+        await assertWrite(ctx, runtime, context, "memory.reject", [input.id]);
+        const node = runtime.store.reject(input.id, {
+          author: writeContext(context).author,
+          reason: input.reason,
+        });
+        if (!node) throw new Error(`No memory node found for ${input.id}`);
+        const updated = runtime.store.get(node.id);
+        return {
+          content: updated ? formatNode(updated) : `Rejected ${node.id}.`,
+          metadata: {
+            nodeID: node.id,
+            status: node.status,
+            verificationState: node.verificationState,
+          },
         };
       },
     });

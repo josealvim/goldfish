@@ -104,7 +104,7 @@ test("inferred claims require confirmation before auto-injection", async () => {
     assert.equal(explicit.cards[0]?.basis, "inferred");
 
     const confirmed = store.confirm(result.node!.id, {
-      as: "cited",
+      as: "verified",
       author: { type: "human", id: "reviewer" },
       reason: "Reviewed against the billing worker code.",
     });

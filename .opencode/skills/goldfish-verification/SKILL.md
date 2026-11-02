@@ -35,6 +35,12 @@ needs-human items, disputed/stale claims, rejected nodes, and claims where
 ratification to `verified` is suggested. Use `memory_get` for the full claim,
 citations, versions, and audit history.
 
+Review actions are writes. Use `memory_admin.confirm` only after checking the
+evidence and, for `verified`, only on explicit human instruction. Confirming as
+`verified` records a human citation and is permission-gated. Use
+`memory_admin.reject` when the claim is wrong or unsupported; it remains in
+history but stops auto-injecting.
+
 ## Verification pass
 
 1. Choose at most 5 highest-priority items unless the user asks for more.

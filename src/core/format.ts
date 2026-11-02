@@ -161,10 +161,16 @@ export function formatReview(items: ReviewItem[], conflicts: ConflictProposal[] 
   if (items.length) {
     lines.push(`# Memory review queue (${items.length})`, "");
     for (const item of items) {
+      const next = item.node.metadata.ratificationSuggested
+        ? 'memory_admin.confirm as="verified" after human approval'
+        : item.node.status === "stale" || item.node.status === "disputed"
+          ? "memory_admin.reject, or revise with memory_remember + supersedes"
+          : 'memory_admin.confirm as="cited"|"derived"|"verified", or memory_admin.reject';
       lines.push(
         `- ${item.node.id}`,
         `  [${item.node.kind} · ${item.node.basis} · ${item.node.status}] ${item.node.title}`,
         `  Reasons: ${item.reasons.join("; ")}`,
+        `  Next: ${next}`,
       );
     }
   }

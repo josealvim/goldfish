@@ -31,8 +31,8 @@ This project has a local knowledge base exposed through the \`memory\` tools.
 - Call \`memory_status\` before a large planning task. If onboarding is empty or
   recommended, suggest \`/goldfish-onboard\`.
 - Use \`memory_health\` and \`memory_list\` for maintenance; use the
-  \`memory_admin\` namespace for precise cite/link/unlink/update/archive/conflict
-  changes.
+  \`memory_admin\` namespace for precise confirm/reject/cite/link/unlink/update/
+  archive/conflict changes.
 - Use \`memory_review\`, \`memory_verify\`, and \`memory_audit\` before relying on
   unverified, disputed, or stale claims.
 - Before planning unfamiliar work, call \`memory_recall\` with domain terms and the
@@ -100,6 +100,11 @@ content, or queue a claim for human review. It never makes a claim \`verified\`.
 \`memory_conflicts\` discovers likely clashes with related claims. It only
 creates proposals; it never disputes a claim or creates an edge. Use
 \`memory_admin.conflict\` to confirm or dismiss only after explicit human review.
+
+\`memory_admin.confirm\` accepts \`cited\`, \`derived\`, or \`verified\`. Confirming
+as \`verified\` requires explicit human instruction, records a human citation, and
+is permission-gated. \`memory_admin.reject\` keeps the claim in history but stops
+auto-injection.
 
 \`memory_audit\` samples auto-inject-eligible claims with 3% uniform plus 7%
 risk-weighted slots. Use \`mode=candidates\` to preview, \`mode=run\` to audit, and

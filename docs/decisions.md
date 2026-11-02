@@ -61,6 +61,21 @@ queue and health report. Semantic verdicts are cached by an input hash that
 covers the claim version, citations, premises, conflicts, and citation
 freshness. A material revision resets verification.
 
+## Human review actions are explicit and versioned
+
+A model may suggest a verdict or a ratification, but a human decision is a
+separate write. `memory_admin.confirm` accepts `cited`, `derived`, or
+`verified`. Confirming as `cited` requires at least one citation; confirming as
+`derived` requires a `derived_from` premise; confirming as `verified` requires
+explicit human instruction, is permission-gated, and records a human citation
+with the reason. Confirmation clears the ratification suggestion.
+
+`memory_admin.reject` keeps the claim and its history available through
+`memory_get` but sets its verification state to rejected and removes it from
+auto-injection. Confirmation and rejection both create a new node version and
+carry the existing citations forward. This closes the review loop without
+letting a verifier or an agent ratify itself.
+
 ## Audit sampling
 
 Auto-inject-eligible claims are audited with a 3% uniform random sample and a

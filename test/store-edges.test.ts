@@ -45,7 +45,7 @@ test("material revisions create a version and reset inferred verification", asyn
       { author },
     );
     store.confirm(first.node!.id, {
-      as: "cited",
+      as: "verified",
       author: { type: "human", id: "reviewer" },
     });
     const revised = store.remember(
