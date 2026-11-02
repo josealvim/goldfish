@@ -44,6 +44,11 @@ Use `memory_repair` and `/goldfish-repair` for versioned corrections of stale,
 disputed, rejected, or unsupported claims. Repair is read-only until the user
 chooses an action.
 
+Use `memory_learn` and `/goldfish-learn` for explicit session learning. It reads
+a bounded digest of user and assistant text; it never stores the transcript.
+Stage the full candidate list when it exceeds the display page, and treat
+session-only claims as `inferred`.
+
 For precise changes, use the `memory_admin` namespace through `execute`:
 
 - `memory_admin.cite` — add citations without rewriting the body

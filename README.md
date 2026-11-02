@@ -43,7 +43,7 @@ No npm publish is required. The package is installed directly from Git.
 opencode plugin add github:josealvim/goldfish
 
 # Pin a release tag
-opencode plugin add github:josealvim/goldfish#v0.10.0
+opencode plugin add github:josealvim/goldfish#v0.11.0
 ```
 
 Or clone the repository and run the installer:
@@ -117,6 +117,8 @@ npm run memory -- recall "how does injection work?"
 | `memory_neighbors` | Walk the knowledge graph one or two hops. |
 | `memory_status` | Show memory coverage and whether onboarding is recommended. |
 | `memory_scan` | Read-only structural scan: layout, manifests, scripts, candidate components, entry points, docs headings, CI, and Git metadata. |
+| `memory_learn` | Read a bounded, redacted digest of user and assistant session text. Read-only. |
+| `memory_stage_learning` | Stage the full session-learning candidate list in a local review file without writing memory. |
 | `memory_list` | List nodes by kind, status, basis, scope, or tag, with citation and edge counts. |
 | `memory_health` | Show uncited, stale, disputed, orphaned, low-confidence, backlog, ratification, and renamed-ID diagnostics. |
 | `memory_verify` | Verify inferred/derived claims against bounded current-source windows with deterministic checks plus an optional semantic verifier. Never promotes to `verified`; may suggest ratification. |
@@ -141,6 +143,7 @@ The `project-memory` skill teaches the daily workflow. The
 `goldfish-onboarding` skill bootstraps a new project. The
 `goldfish-verification` skill covers verification, conflicts, audit, evaluation,
 and human review actions. The `goldfish-repair` skill covers versioned repairs.
+The `goldfish-learn` skill covers explicit session learning.
 `AGENTS.md` carries the short policy so it applies even when a skill is not
 loaded.
 
@@ -188,6 +191,32 @@ If memory is empty and you did not ask to onboard, the model should suggest
 It does not read arbitrary source bodies, write memory, or call a model. Use it
 before onboarding, repair, or targeted reads. `/goldfish-scan [scope]` exposes
 the same scan.
+
+## Session learning
+
+Session learning is explicit and human-approved. It never runs from a hook.
+
+```text
+/goldfish-learn
+/goldfish-learn ses_abc123
+```
+
+`memory_learn` returns a bounded, redacted digest of user and assistant text. It
+excludes reasoning, system, synthetic, and tool content. The agent extracts
+candidates, deduplicates them against memory, and shows at most five at a time
+with stable IDs.
+
+If there are more than five candidates, `memory_stage_learning` writes the full
+list to:
+
+```text
+.opencode/memory/session-learning/<session-id>.jsonl
+```
+
+The staging file is a local review artifact, not memory. It is never
+auto-injected. Session-only claims default to `inferred`; concrete file, test, or
+commit citations take precedence. Only approved candidates are written with
+`memory_remember`.
 
 ## Maintenance
 
@@ -249,6 +278,7 @@ The plugin also registers the corresponding commands:
 
 ```text
 /goldfish-scan [scope]       map the repository without writing memory
+/goldfish-learn [session]    digest a session and propose durable candidates
 /goldfish-review [scope]     show the review queue
 /goldfish-verify [target]    verify up to 5 claims
 /goldfish-audit [target]     sample and audit eligible claims
@@ -585,7 +615,9 @@ The core has no OpenCode imports. The plugin is an adapter over the same
   still rely on their recorded excerpt unless another adapter is added.
 - `memory_scan` is a read-only structural scan. Automatic structural node
   ingestion, PR metadata, and session metadata adapters are not implemented.
-  Seed via JSONL or let agents write claims.
+  Session learning is explicit and read-only until candidates are approved.
+- Session-learning candidates are staged in a local review file; the raw
+  transcript is never stored or remembered.
 - Import merges the current node state and preserves citations and edges, but it
   does not replay historical versions or carry audit/conflict-proposal review
   state.
@@ -599,7 +631,7 @@ npm test
 npm run seed
 ```
 
-The 81 tests cover policy and glob matching, recall filters and budgets,
+The 85 tests cover policy and glob matching, recall filters and budgets,
 material revisions and supersession, multi-conflict forks, bounded source
 snapshots and redaction, citation freshness, derived cycles and premise
 soundness, verifier verdicts and caching, conflict candidate retrieval,

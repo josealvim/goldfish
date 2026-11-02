@@ -13,6 +13,12 @@ import {
 import { buildRepairPacket, formatRepairPacket } from "../core/repair.ts";
 import { formatProjectScan, scanProject } from "../core/scan.ts";
 import {
+  buildSessionDigest,
+  formatSessionDigest,
+  stageLearningCandidates,
+  type LearningCandidateInput,
+} from "../core/session-learning.ts";
+import {
   formatAuditCandidates,
   formatMemoryHealth,
   formatMemoryList,
@@ -182,6 +188,17 @@ interface ScanInput {
   scope?: string;
   maxFiles?: number;
   includeGit?: boolean;
+}
+
+interface LearnInput {
+  sessionID?: string;
+  maxMessages?: number;
+  maxChars?: number;
+}
+
+interface StageLearningInput {
+  sessionID?: string;
+  candidates: LearningCandidateInput[];
 }
 
 const BUNDLED_EVAL_DIR = fileURLToPath(new URL("../../evals", import.meta.url));
@@ -508,6 +525,41 @@ const scanSchema = {
   additionalProperties: false,
 } as const;
 
+const learnSchema = {
+  type: "object",
+  properties: {
+    sessionID: { type: "string", description: "Session to read; defaults to the current session." },
+    maxMessages: { type: "integer", minimum: 1, maximum: 100 },
+    maxChars: { type: "integer", minimum: 500, maximum: 50_000 },
+  },
+  additionalProperties: false,
+} as const;
+
+const stageLearningSchema = {
+  type: "object",
+  properties: {
+    sessionID: { type: "string" },
+    candidates: {
+      type: "array",
+      minItems: 1,
+      maxItems: 200,
+      items: {
+        type: "object",
+        properties: {
+          kind: { type: "string", enum: [...NODE_KINDS] },
+          title: { type: "string" },
+          body: { type: "string" },
+          citations: { type: "array", items: citationSchema },
+        },
+        required: ["kind", "title", "body"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["candidates"],
+  additionalProperties: false,
+} as const;
+
 const auditSchema = {
   type: "object",
   properties: {
@@ -745,6 +797,58 @@ export async function registerTools(ctx: PluginContext, runtime: Runtime): Promi
             docs: scan.docs.length,
             git: Boolean(scan.git),
           },
+        };
+      },
+    });
+
+    editor.add({
+      name: "learn",
+      description:
+        "Read a bounded, redacted digest of user and assistant text from a session. Read-only. " +
+        "Use it to propose durable learning candidates, not to write memory automatically.",
+      input: learnSchema,
+      options: { namespace: "memory", codemode: false },
+      execute: async (raw, context) => {
+        const input = (raw ?? {}) as LearnInput;
+        const sessionID = input.sessionID ?? String(context.sessionID);
+        const messages = await ctx.session.context({ sessionID });
+        const digest = buildSessionDigest(messages, sessionID, {
+          maxMessages: input.maxMessages,
+          maxChars: input.maxChars,
+        });
+        return {
+          content: formatSessionDigest(digest),
+          metadata: {
+            sessionID,
+            included: digest.included,
+            considered: digest.considered,
+            skipped: digest.skipped,
+            omitted: digest.omitted,
+            truncated: digest.truncated,
+          },
+        };
+      },
+    });
+
+    editor.add({
+      name: "stage_learning",
+      description:
+        "Write the full list of proposed session-learning candidates to a local review file. " +
+        "Does not write memory nodes and never stages raw transcript content.",
+      input: stageLearningSchema,
+      options: { namespace: "memory", codemode: false },
+      execute: async (raw, context) => {
+        const input = raw as unknown as StageLearningInput;
+        const sessionID = input.sessionID ?? String(context.sessionID);
+        await assertWrite(ctx, runtime, context, "memory.stageLearning", [sessionID]);
+        const result = stageLearningCandidates(
+          runtime.projectRoot,
+          sessionID,
+          input.candidates,
+        );
+        return {
+          content: `Staged ${result.count} candidate(s) at ${result.path}.`,
+          metadata: result,
         };
       },
     });

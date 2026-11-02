@@ -28,6 +28,10 @@ export const REPAIR_SKILL_PATH = fileURLToPath(
   new URL("../../.opencode/skills/goldfish-repair/SKILL.md", import.meta.url),
 );
 
+export const LEARN_SKILL_PATH = fileURLToPath(
+  new URL("../../.opencode/skills/goldfish-learn/SKILL.md", import.meta.url),
+);
+
 export const FALLBACK_CONTENT = `# Project memory
 
 This project has a local knowledge base exposed through the \`memory\` tools.
@@ -45,6 +49,9 @@ This project has a local knowledge base exposed through the \`memory\` tools.
   model confidence scores.
 - Use \`memory_repair\` and \`/goldfish-repair\` for versioned corrections of
   stale, disputed, rejected, or unsupported claims.
+- Use \`memory_learn\` and \`/goldfish-learn\` for explicit session learning. Stage
+  the full candidate list when it exceeds the display page; never discard
+  candidates. Session-only claims are inferred.
 - Conflict discovery is proposal-only. Confirm or dismiss with
   \`memory_admin.conflict\` only after explicit human review.
 - Confirming as \`cited\` needs a citation, \`derived\` needs sound premises, and
@@ -164,6 +171,23 @@ Never auto-resolve a conflict, never delete history, and never verify without
 human, test, or commit evidence.
 `;
 
+const LEARN_FALLBACK_CONTENT = `# Goldfish session learning
+
+Use this when the user invokes \`/goldfish-learn\` or asks to capture durable
+lessons from a session.
+
+Call \`memory_learn\` for a bounded digest of user and assistant text. Do not use
+reasoning or tool content. Extract every candidate that meets the criteria, not
+only five. If there are more than five, call \`memory_stage_learning\` with the
+full list and show the staging path. Display at most five at a time with stable
+IDs and a remaining count.
+
+Session-only claims default to \`inferred\`. Prefer concrete file/test/commit
+citations when present. Never mark a claim \`verified\` from a transcript alone.
+Wait for approval before calling \`memory_remember\`. Never store the raw
+transcript, secrets, personal data, or transient task state.
+`;
+
 const PROJECT_MEMORY_SKILL: SkillSpec = {
   id: "project-memory",
   name: "Project Memory",
@@ -180,6 +204,15 @@ const ONBOARDING_SKILL: SkillSpec = {
     "Bootstrap goldfish project memory in a project that is new to goldfish or has empty memory. Use when the user asks to onboard, get oriented, or establish project memory. Do not use for routine recall. Check memory_status first; if memory already has an overview and components, only fill gaps.",
   path: ONBOARDING_SKILL_PATH,
   fallback: ONBOARDING_FALLBACK_CONTENT,
+};
+
+const LEARN_SKILL: SkillSpec = {
+  id: "goldfish-learn",
+  name: "Goldfish Learn",
+  description:
+    "Extract reviewed, evidence-backed project knowledge from a bounded session digest. Use when the user invokes /goldfish-learn, wants to capture lessons from the current or a past session, or asks to mine a session for decisions, gotchas, commands, conventions, or relationships.",
+  path: LEARN_SKILL_PATH,
+  fallback: LEARN_FALLBACK_CONTENT,
 };
 
 const REPAIR_SKILL: SkillSpec = {
@@ -252,5 +285,6 @@ export async function registerSkills(ctx: PluginContext): Promise<Registration> 
     ONBOARDING_SKILL,
     VERIFICATION_SKILL,
     REPAIR_SKILL,
+    LEARN_SKILL,
   ]);
 }

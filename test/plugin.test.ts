@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createRuntime, type PluginContext, type Runtime } from "../src/plugin/runtime.ts";
@@ -33,6 +33,7 @@ function makeFake(options: {
   requireWritePermission?: boolean;
   verificationResponse?: string;
   conflictResponse?: string | ((prompt: string) => string);
+  sessionMessages?: unknown[];
 }): Fake {
   const tools = new Map<string, any>();
   const promptHooks: Fake["promptHooks"] = [];
@@ -76,6 +77,7 @@ function makeFake(options: {
       prompts.push(input);
       return {};
     },
+    context: async () => options.sessionMessages ?? [],
   };
   if (options.withInstructions !== false) {
     session.instructions = {
@@ -169,6 +171,7 @@ async function withPlugin(
     requireWritePermission?: boolean;
     verificationResponse?: string;
     conflictResponse?: string | ((prompt: string) => string);
+    sessionMessages?: unknown[];
   } = {},
 ): Promise<void> {
   const root = mkdtempSync(path.join(tmpdir(), "goldfish-plugin-"));
@@ -219,6 +222,7 @@ test("registers agent tools and executes recall/get", async () => {
       "eval",
       "get",
       "health",
+      "learn",
       "link",
       "list",
       "neighbors",
@@ -228,6 +232,7 @@ test("registers agent tools and executes recall/get", async () => {
       "repair",
       "review",
       "scan",
+      "stage_learning",
       "status",
       "unlink",
       "update",
@@ -555,6 +560,65 @@ test("memory_scan returns a read-only structural scan", async () => {
   });
 });
 
+test("memory_learn digests text and stage_learning writes a review file", async () => {
+  await withPlugin(
+    async (fake, runtime) => {
+      await registerTools(fake.ctx, runtime);
+      const learn = fake.tools.get("learn")!;
+      const digest = await learn.execute({ maxMessages: 5 }, toolContext);
+      assert.match(String(digest.content), /Session digest/);
+      assert.match(String(digest.content), /We decided to use an outbox/);
+      assert.match(String(digest.content), /The outbox retries deliveries/);
+      assert.doesNotMatch(String(digest.content), /hidden reasoning/);
+      assert.doesNotMatch(String(digest.content), /tool argument/);
+
+      const stage = fake.tools.get("stage_learning")!;
+      const staged = await stage.execute(
+        {
+          candidates: [
+            {
+              kind: "decision",
+              title: "Use an outbox",
+              body: "Billing uses an outbox for delivery.",
+              citations: [
+                {
+                  type: "session",
+                  locator: "ses_test/msg_user",
+                  excerpt: "We decided to use an outbox.",
+                },
+              ],
+            },
+          ],
+        },
+        toolContext,
+      );
+      const file = String((staged.metadata as any).path);
+      const lines = readFileSync(file, "utf8").trim().split("\n");
+      assert.equal(lines.length, 1);
+      const record = JSON.parse(lines[0]!);
+      assert.equal(record.status, "pending");
+      assert.equal(record.id, "c1");
+      assert.equal(record.title, "Use an outbox");
+      assert.equal(runtime.store.status().total, 0);
+    },
+    {
+      sessionMessages: [
+        { id: "msg_user", type: "user", text: "We decided to use an outbox." },
+        {
+          id: "msg_assistant",
+          type: "assistant",
+          content: [
+            { type: "text", text: "The outbox retries deliveries." },
+            { type: "reasoning", text: "hidden reasoning" },
+            { type: "tool", id: "tool_1", name: "read", state: { input: "tool argument" } },
+          ],
+        },
+        { id: "msg_system", type: "system", text: "system prompt" },
+      ],
+    },
+  );
+});
+
 test("memory_repair returns a read-only repair packet", async () => {
   await withPlugin(async (fake, runtime) => {
     const created = seed(runtime);
@@ -869,13 +933,14 @@ test("skill registration reads the bundled skill and falls back when missing", a
   assert.match(fallback.content, /memory_eval/);
   assert.match(fallback.content, /memory_repair/);
   assert.match(fallback.content, /memory_scan/);
+  assert.match(fallback.content, /memory_learn/);
   assert.match(fallback.content, /memory_admin\.confirm/);
 });
 
-test("registerSkills registers the daily, onboarding, verification, and repair skills", async () => {
+test("registerSkills registers the daily, onboarding, verification, repair, and learn skills", async () => {
   await withPlugin(async (fake) => {
     await registerSkills(fake.ctx);
-    assert.equal(fake.skills.length, 4);
+    assert.equal(fake.skills.length, 5);
     const byID = new Map(fake.skills.map((skill) => [skill.id, skill]));
     assert.equal(byID.has("project-memory"), true);
     const onboarding = byID.get("goldfish-onboarding");
@@ -899,6 +964,11 @@ test("registerSkills registers the daily, onboarding, verification, and repair s
     assert.match(repair?.content ?? "", /memory_repair/);
     assert.match(repair?.content ?? "", /human authority/);
     assert.match(repair?.content ?? "", /Never auto-resolve a conflict/);
+    const learn = byID.get("goldfish-learn");
+    assert.equal(learn?.autoinvoke, true);
+    assert.match(learn?.content ?? "", /memory_learn/);
+    assert.match(learn?.content ?? "", /memory_stage_learning/);
+    assert.match(learn?.content ?? "", /Never silently discard/);
   });
 });
 
@@ -910,6 +980,7 @@ test("the onboarding command injects a scoped onboarding prompt", async () => {
       [
         "goldfish-onboard",
         "goldfish-scan",
+        "goldfish-learn",
         "goldfish-verify",
         "goldfish-audit",
         "goldfish-conflicts",
@@ -952,63 +1023,71 @@ test("the onboarding command injects a scoped onboarding prompt", async () => {
 
     await fake.commands[2].execute({
       sessionID: "ses_test",
+      prompt: { text: "ses_test" },
+      delivery: "steer",
+    });
+    assert.match(String(fake.prompts[3].text), /memory_learn/);
+    assert.match(String(fake.prompts[3].text), /ses_test/);
+
+    await fake.commands[3].execute({
+      sessionID: "ses_test",
       prompt: { text: "decision/billing" },
       delivery: "steer",
     });
-    assert.match(String(fake.prompts[3].text), /memory_verify/);
-    assert.match(String(fake.prompts[3].text), /decision\/billing/);
+    assert.match(String(fake.prompts[4].text), /memory_verify/);
+    assert.match(String(fake.prompts[4].text), /decision\/billing/);
 
-    await fake.commands[3].execute({
+    await fake.commands[4].execute({
       sessionID: "ses_test",
       prompt: { text: "" },
       delivery: "steer",
     });
-    assert.match(String(fake.prompts[4].text), /memory_audit/);
+    assert.match(String(fake.prompts[5].text), /memory_audit/);
 
-    await fake.commands[4].execute({
+    await fake.commands[5].execute({
       sessionID: "ses_test",
       prompt: { text: "decision/example" },
       delivery: "steer",
     });
-    assert.match(String(fake.prompts[5].text), /memory_conflicts/);
-    assert.match(String(fake.prompts[5].text), /decision\/example/);
+    assert.match(String(fake.prompts[6].text), /memory_conflicts/);
+    assert.match(String(fake.prompts[6].text), /decision\/example/);
 
-    await fake.commands[5].execute({
+    await fake.commands[6].execute({
       sessionID: "ses_test",
       prompt: { text: "support" },
       delivery: "steer",
     });
-    assert.match(String(fake.prompts[6].text), /memory_eval/);
-    assert.match(String(fake.prompts[6].text), /support/);
+    assert.match(String(fake.prompts[7].text), /memory_eval/);
+    assert.match(String(fake.prompts[7].text), /support/);
 
-    await fake.commands[6].execute({
+    await fake.commands[7].execute({
       sessionID: "ses_test",
       prompt: { text: "" },
       delivery: "steer",
     });
-    assert.match(String(fake.prompts[7].text), /memory_review/);
+    assert.match(String(fake.prompts[8].text), /memory_review/);
 
-    await fake.commands[7].execute({
+    await fake.commands[8].execute({
       sessionID: "ses_test",
       prompt: { text: "decision/example" },
       delivery: "steer",
     });
-    assert.match(String(fake.prompts[8].text), /memory_repair/);
-    assert.match(String(fake.prompts[8].text), /decision\/example/);
+    assert.match(String(fake.prompts[9].text), /memory_repair/);
+    assert.match(String(fake.prompts[9].text), /decision\/example/);
 
-    await fake.commands[8].execute({
+    await fake.commands[9].execute({
       sessionID: "ses_test",
       prompt: { text: "decision/example as=verified" },
       delivery: "steer",
     });
-    assert.match(String(fake.prompts[9].text), /memory_admin\.confirm/);
-    assert.match(String(fake.prompts[9].text), /human, test, or commit/);
+    assert.match(String(fake.prompts[10].text), /memory_admin\.confirm/);
+    assert.match(String(fake.prompts[10].text), /human, test, or commit/);
 
-    await fake.commands[9].execute({
+    await fake.commands[10].execute({
       sessionID: "ses_test",
       prompt: { text: "gotcha/example" },
       delivery: "steer",
     });
-    assert.match(String(fake.prompts[10].text), /memory_admin\.reject/);
+    assert.match(String(fake.prompts[11].text), /memory_admin\.reject/);
   });
 });

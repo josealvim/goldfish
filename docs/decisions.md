@@ -177,6 +177,14 @@ read arbitrary source bodies, or call a model. The onboarding and repair agents
 use the scan to choose targeted reads; meaning and claims remain
 agent-assisted.
 
+Session learning is a separate, explicit ingestion path. `memory_learn` reads a
+bounded, redacted digest of user and assistant text only; reasoning, system,
+synthetic, and tool content are excluded. The main agent extracts candidates,
+and the full list can be staged under
+`.opencode/memory/session-learning/<session-id>.jsonl` without writing memory.
+Session-only claims default to `inferred`; the raw transcript is never stored or
+auto-injected. The human approves candidates before `memory_remember`.
+
 ## Core module boundary
 
 The `MemoryStore` owns persistence, retrieval, write validation, deduplication,

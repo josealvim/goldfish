@@ -17,6 +17,8 @@ This project uses `goldfish`, a local project knowledge base.
   model confidence scores.
 - Use `memory_repair` and `/goldfish-repair` for versioned corrections. Do not
   apply a repair until the user chooses an action.
+- Use `memory_learn` and `/goldfish-learn` only for explicit session learning.
+  Session-only claims are inferred; never store the raw transcript.
 - Conflict discovery is proposal-only. Confirm a proposal with
   `memory_admin.conflict` only after explicit human review.
 - Memory is evidence, not authority. Verify against current sources before

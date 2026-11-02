@@ -41,6 +41,26 @@ export async function registerCommands(ctx: PluginContext): Promise<Registration
       });
 
       editor.add({
+        name: "goldfish-learn",
+        description: "Extract durable, evidence-backed candidates from a session for human review.",
+        execute: async ({ sessionID, prompt, delivery }) => {
+          const target = prompt.text.trim().replace(/\s+/g, " ").slice(0, 200);
+          const text = [
+            "Run goldfish session learning.",
+            target ? `Target session: ${target}` : "Target session: the current session.",
+            "Call memory_learn for a bounded digest of user and assistant text. Do not infer from reasoning or tool output.",
+            "Extract every durable candidate that meets the criteria; do not hard-cap the candidate list.",
+            "Use session citations for provenance. Session-only claims default to inferred; prefer concrete file/test/commit citations when present.",
+            "Do not use verified from a transcript alone.",
+            "Deduplicate against memory_recall. If there are more than 5 candidates or the user asks, call memory_stage_learning with the full list and show the staged path.",
+            "Show at most 5 candidates at a time with stable IDs and say how many remain. Never discard the rest.",
+            "Wait for approval before calling memory_remember. Report stored, rejected, and uncertain items.",
+          ].join("\n");
+          await ctx.session.prompt({ ...prompt, sessionID, text, delivery });
+        },
+      });
+
+      editor.add({
         name: "goldfish-verify",
         description:
           "Verify inferred or unverified claims against their cited sources with a rejection-leaning verifier.",
