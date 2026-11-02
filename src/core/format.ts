@@ -286,6 +286,11 @@ export function formatMemoryHealth(health: MemoryHealth): string {
     ...healthIssueSection("Low confidence", health.lowConfidence, health.counts.lowConfidence),
     ...healthIssueSection("Verification backlog", health.verificationBacklog, health.counts.verificationBacklog),
     ...healthIssueSection("Audit backlog", health.auditBacklog, health.counts.auditBacklog),
+    ...healthIssueSection(
+      "Proposed conflicts",
+      health.conflictProposals,
+      health.counts.conflictProposals,
+    ),
     ...healthIssueSection("Renamed IDs", health.renamedIds, health.counts.renamedIds),
     ...healthIssueSection(
       "Ratification suggested",

@@ -177,6 +177,9 @@ test("conflict proposals are canonical, stale on revision, dismissible, and conf
     assert.equal(proposal.id, store.getConflictProposal(target.id, candidate.id)!.id);
     assert.equal(proposal.status, "proposed");
     assert.equal(proposal.stale, false);
+    const health = store.health();
+    assert.equal(health.counts.conflictProposals, 1);
+    assert.match(health.conflictProposals[0]?.id ?? "", /↔/);
 
     store.remember(
       {

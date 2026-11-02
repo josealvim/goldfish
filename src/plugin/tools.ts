@@ -10,6 +10,7 @@ import {
   runConflictEval,
   runSupportEval,
 } from "../core/eval.ts";
+import { buildRepairPacket, formatRepairPacket } from "../core/repair.ts";
 import {
   formatAuditCandidates,
   formatMemoryHealth,
@@ -172,6 +173,10 @@ interface EvalInput {
   limit?: number;
 }
 
+interface RepairInput {
+  id: string;
+}
+
 const BUNDLED_EVAL_DIR = fileURLToPath(new URL("../../evals", import.meta.url));
 
 const recallSchema = {
@@ -274,6 +279,11 @@ const rememberSchema = {
         "verified requires human/test/commit evidence; cited requires a valid source; derived requires verified/cited premises linked with derived_from; inferred is unverified.",
     },
     confidence: { type: "number", minimum: 0, maximum: 1 },
+    reason: {
+      type: "string",
+      description:
+        "Why this claim was created or revised; recorded in version history for audits.",
+    },
     supersedes: {
       type: "string",
       description: "ID of an existing claim this one intentionally replaces.",
@@ -469,6 +479,15 @@ const evalSchema = {
   additionalProperties: false,
 } as const;
 
+const repairSchema = {
+  type: "object",
+  properties: {
+    id: { type: "string", description: "Memory node ID to inspect for repair." },
+  },
+  required: ["id"],
+  additionalProperties: false,
+} as const;
+
 const auditSchema = {
   type: "object",
   properties: {
@@ -608,6 +627,35 @@ export async function registerTools(ctx: PluginContext, runtime: Runtime): Promi
         return {
           content: detail ? formatNode(detail) : `No memory node found for ${input.id}.`,
           metadata: detail ? { found: true, nodeID: detail.node.id } : { found: false },
+        };
+      },
+    });
+
+    editor.add({
+      name: "repair",
+      description:
+        "Inspect a claim for versioned repair. Returns citations, freshness, conflicts, neighbors, history, " +
+        "a deterministic repair tier, and suggested actions. Read-only; apply repairs through memory_admin " +
+        "and memory_remember only after user approval.",
+      input: repairSchema,
+      options: { namespace: "memory", codemode: false },
+      execute: async (raw) => {
+        const input = raw as unknown as RepairInput;
+        const packet = buildRepairPacket(runtime.store, input.id);
+        if (!packet) {
+          return {
+            content: `No memory node found for ${input.id}.`,
+            metadata: { found: false },
+          };
+        }
+        return {
+          content: formatRepairPacket(packet),
+          metadata: {
+            found: true,
+            nodeID: packet.node.id,
+            tier: packet.suggestedTier,
+            actions: packet.actions.map((action) => action.action),
+          },
         };
       },
     });

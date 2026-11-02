@@ -24,6 +24,10 @@ export const VERIFICATION_SKILL_PATH = fileURLToPath(
   new URL("../../.opencode/skills/goldfish-verification/SKILL.md", import.meta.url),
 );
 
+export const REPAIR_SKILL_PATH = fileURLToPath(
+  new URL("../../.opencode/skills/goldfish-repair/SKILL.md", import.meta.url),
+);
+
 export const FALLBACK_CONTENT = `# Project memory
 
 This project has a local knowledge base exposed through the \`memory\` tools.
@@ -37,6 +41,8 @@ This project has a local knowledge base exposed through the \`memory\` tools.
   \`memory_audit\` before relying on unverified, disputed, or stale claims.
 - Use \`memory_eval\` to measure binary decisions and evidence grounding, not
   model confidence scores.
+- Use \`memory_repair\` and \`/goldfish-repair\` for versioned corrections of
+  stale, disputed, rejected, or unsupported claims.
 - Conflict discovery is proposal-only. Confirm or dismiss with
   \`memory_admin.conflict\` only after explicit human review.
 - Confirming as \`cited\` needs a citation, \`derived\` needs sound premises, and
@@ -135,6 +141,27 @@ verifier model or set \`verification.readSources: false\` if source text must no
 leave the machine.
 `;
 
+const REPAIR_FALLBACK_CONTENT = `# Goldfish repair
+
+Use this when a claim is stale, disputed, rejected, or unsupported, or when the
+user invokes \`/goldfish-repair\`.
+
+Call \`memory_repair\` first. It returns citations, freshness, conflicts,
+neighbors, version history, a suggested tier, and read-only repair actions. Read
+the current sources and present the options; do not write until the user chooses
+an action.
+
+Tiers: metadata, agent content, human authority, and incident. Use
+\`memory_remember\` with a \`reason\` and repair metadata for content revisions.
+Use \`memory_admin.update\` for metadata, \`memory_admin.confirm\` for
+cited/derived/verified confirmation, \`memory_admin.reject\` for rejection, and
+\`memory_admin.archive\` for malicious content. Re-run \`memory_verify\` after a
+content repair and finish with \`memory_review\`.
+
+Never auto-resolve a conflict, never delete history, and never verify without
+human, test, or commit evidence.
+`;
+
 const PROJECT_MEMORY_SKILL: SkillSpec = {
   id: "project-memory",
   name: "Project Memory",
@@ -151,6 +178,15 @@ const ONBOARDING_SKILL: SkillSpec = {
     "Bootstrap goldfish project memory in a project that is new to goldfish or has empty memory. Use when the user asks to onboard, get oriented, or establish project memory. Do not use for routine recall. Check memory_status first; if memory already has an overview and components, only fill gaps.",
   path: ONBOARDING_SKILL_PATH,
   fallback: ONBOARDING_FALLBACK_CONTENT,
+};
+
+const REPAIR_SKILL: SkillSpec = {
+  id: "goldfish-repair",
+  name: "Goldfish Repair",
+  description:
+    "Inspect and repair stale, disputed, rejected, or unsupported goldfish claims with versioned corrections. Use when the user invokes /goldfish-repair, when memory_health or memory_review shows a claim that needs correction, or after verification reports stale, contradicted, or insufficient evidence.",
+  path: REPAIR_SKILL_PATH,
+  fallback: REPAIR_FALLBACK_CONTENT,
 };
 
 const VERIFICATION_SKILL: SkillSpec = {
@@ -209,5 +245,10 @@ export async function registerSkill(ctx: PluginContext): Promise<Registration> {
 }
 
 export async function registerSkills(ctx: PluginContext): Promise<Registration> {
-  return registerSpecs(ctx, [PROJECT_MEMORY_SKILL, ONBOARDING_SKILL, VERIFICATION_SKILL]);
+  return registerSpecs(ctx, [
+    PROJECT_MEMORY_SKILL,
+    ONBOARDING_SKILL,
+    VERIFICATION_SKILL,
+    REPAIR_SKILL,
+  ]);
 }

@@ -61,7 +61,8 @@ user wants to act on a specific claim.
      queryable.
    - `stale` → a cited file changed or disappeared; repair or re-cite it.
    - `malicious` → archive the claim; do not reuse its content.
-5. If the claim is wrong, add a citation with `memory_admin.cite` or revise it
+5. If the claim is wrong, use `/goldfish-repair` and follow the
+   `goldfish-repair` skill. Add a citation with `memory_admin.cite` or revise it
    with `memory_remember` and `supersedes`. Do not overwrite history.
 
 `memory_verify` caches a semantic verdict by an input hash, so re-running it on
@@ -117,6 +118,7 @@ A conflict is not a vote. When two claims conflict:
 - `/goldfish-eval [suite]` — evaluate binary decisions and evidence grounding.
   The equivalent tool is `memory_eval`.
 - `/goldfish-review [scope]` — show and explain the review queue.
+- `/goldfish-repair [target]` — inspect and apply a versioned correction.
 - `/goldfish-ratify [target]` — review and confirm a claim as cited, derived, or verified.
 - `/goldfish-reject [target]` — reject a reviewed claim.
 

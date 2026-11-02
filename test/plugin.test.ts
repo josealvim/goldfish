@@ -225,6 +225,7 @@ test("registers agent tools and executes recall/get", async () => {
       "recall",
       "reject",
       "remember",
+      "repair",
       "review",
       "status",
       "unlink",
@@ -542,6 +543,19 @@ test("memory_eval runs a bundled support suite without touching project memory",
   });
 });
 
+test("memory_repair returns a read-only repair packet", async () => {
+  await withPlugin(async (fake, runtime) => {
+    const created = seed(runtime);
+    await registerTools(fake.ctx, runtime);
+    const repair = fake.tools.get("repair")!;
+    const result = await repair.execute({ id: created.node!.id }, toolContext);
+    assert.match(String(result.content), /Repair packet/);
+    assert.equal((result.metadata as any).tier, "none");
+    assert.deepEqual((result.metadata as any).actions, ["leave_for_review"]);
+    assert.equal(runtime.store.get(created.node!.id)!.node.version, 1);
+  });
+});
+
 test("memory_status reports onboarding progress through empty, recommended, partial, and complete", async () => {
   await withPlugin(async (fake, runtime) => {
     await registerTools(fake.ctx, runtime);
@@ -841,13 +855,14 @@ test("skill registration reads the bundled skill and falls back when missing", a
   assert.match(fallback.content, /Project memory/);
   assert.match(fallback.content, /memory_conflicts/);
   assert.match(fallback.content, /memory_eval/);
+  assert.match(fallback.content, /memory_repair/);
   assert.match(fallback.content, /memory_admin\.confirm/);
 });
 
-test("registerSkills registers the daily, onboarding, and verification skills", async () => {
+test("registerSkills registers the daily, onboarding, verification, and repair skills", async () => {
   await withPlugin(async (fake) => {
     await registerSkills(fake.ctx);
-    assert.equal(fake.skills.length, 3);
+    assert.equal(fake.skills.length, 4);
     const byID = new Map(fake.skills.map((skill) => [skill.id, skill]));
     assert.equal(byID.has("project-memory"), true);
     const onboarding = byID.get("goldfish-onboarding");
@@ -866,6 +881,11 @@ test("registerSkills registers the daily, onboarding, and verification skills", 
     assert.match(verification?.content ?? "", /memory_eval/);
     assert.match(verification?.content ?? "", /goldfish-ratify/);
     assert.match(verification?.content ?? "", /must not set .*verified/i);
+    const repair = byID.get("goldfish-repair");
+    assert.equal(repair?.autoinvoke, true);
+    assert.match(repair?.content ?? "", /memory_repair/);
+    assert.match(repair?.content ?? "", /human authority/);
+    assert.match(repair?.content ?? "", /Never auto-resolve a conflict/);
   });
 });
 
@@ -881,6 +901,7 @@ test("the onboarding command injects a scoped onboarding prompt", async () => {
         "goldfish-conflicts",
         "goldfish-eval",
         "goldfish-review",
+        "goldfish-repair",
         "goldfish-ratify",
         "goldfish-reject",
       ],
@@ -947,17 +968,25 @@ test("the onboarding command injects a scoped onboarding prompt", async () => {
 
     await fake.commands[6].execute({
       sessionID: "ses_test",
+      prompt: { text: "decision/example" },
+      delivery: "steer",
+    });
+    assert.match(String(fake.prompts[7].text), /memory_repair/);
+    assert.match(String(fake.prompts[7].text), /decision\/example/);
+
+    await fake.commands[7].execute({
+      sessionID: "ses_test",
       prompt: { text: "decision/example as=verified" },
       delivery: "steer",
     });
-    assert.match(String(fake.prompts[7].text), /memory_admin\.confirm/);
-    assert.match(String(fake.prompts[7].text), /human, test, or commit/);
+    assert.match(String(fake.prompts[8].text), /memory_admin\.confirm/);
+    assert.match(String(fake.prompts[8].text), /human, test, or commit/);
 
-    await fake.commands[7].execute({
+    await fake.commands[8].execute({
       sessionID: "ses_test",
       prompt: { text: "gotcha/example" },
       delivery: "steer",
     });
-    assert.match(String(fake.prompts[8].text), /memory_admin\.reject/);
+    assert.match(String(fake.prompts[9].text), /memory_admin\.reject/);
   });
 });

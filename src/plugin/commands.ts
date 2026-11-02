@@ -122,6 +122,25 @@ export async function registerCommands(ctx: PluginContext): Promise<Registration
       });
 
       editor.add({
+        name: "goldfish-repair",
+        description: "Inspect a claim for versioned repair and apply an approved correction.",
+        execute: async ({ sessionID, prompt, delivery }) => {
+          const target = prompt.text.trim().replace(/\s+/g, " ").slice(0, 200);
+          const text = [
+            "Run a goldfish repair review.",
+            target ? `Target: ${target}` : "Target: ask the user which claim needs repair.",
+            "Follow the goldfish-repair skill.",
+            "Call memory_repair to get the repair packet, then read the current sources and memory_get details.",
+            "Present the suggested tier and actions. Do not write until the user chooses an action.",
+            "Apply one approved action through memory_admin or memory_remember. Use memory_remember with a reason",
+            "and repair metadata for content revisions. Never auto-resolve a conflict.",
+            "Re-run memory_verify on the new version and finish with memory_review.",
+          ].join("\n");
+          await ctx.session.prompt({ ...prompt, sessionID, text, delivery });
+        },
+      });
+
+      editor.add({
         name: "goldfish-ratify",
         description: "Review and confirm a claim as cited, derived, or verified on explicit human instruction.",
         execute: async ({ sessionID, prompt, delivery }) => {

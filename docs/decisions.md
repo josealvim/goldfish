@@ -142,14 +142,24 @@ migrations require `verified` evidence or explicit recall. A strict scope may
 also raise its audit rate. If scope inference is uncertain, the stricter policy
 wins.
 
-## Repair is versioned
+## Repair is versioned and agent-orchestrated
 
 Repairs never delete history. A correction creates a new version, a revert
 creates a new version that restores the previous content, and a stale or
 disputed claim is removed from auto-injection immediately. Repairs are Tier 0
 (metadata), Tier 1 (agent-assisted content), Tier 2 (human/high-authority), or
-Tier 3 (incident response). A repair that lands during a live session can send a
-synthetic correction message.
+Tier 3 (incident response).
+
+`memory_repair` is a read-only packet: current citations and freshness,
+conflicts, neighbors, history, deterministic findings, a recommended tier, and
+suggested actions. The main agent presents the options and applies exactly one
+approved action through the existing write tools. Content revisions use
+`memory_remember` with a reason and repair metadata. The repair workflow does
+not auto-resolve conflicts, auto-verify, or write without approval. There is no
+background repair worker.
+
+A repair that lands during a live session can send a synthetic correction
+message.
 
 ## Ingestion order
 

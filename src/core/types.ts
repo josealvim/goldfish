@@ -179,6 +179,7 @@ export interface MemoryProposal {
   links?: LinkInput[];
   basis?: Basis;
   confidence?: number;
+  reason?: string;
   supersedes?: string;
   contradicts?: string[];
   metadata?: Record<string, unknown>;
@@ -348,6 +349,7 @@ export interface MemoryHealth {
     auditBacklog: number;
     renamedIds: number;
     ratificationSuggested: number;
+    conflictProposals: number;
   };
   uncited: HealthIssue[];
   stale: HealthIssue[];
@@ -358,6 +360,7 @@ export interface MemoryHealth {
   auditBacklog: HealthIssue[];
   renamedIds: HealthIssue[];
   ratificationSuggested: HealthIssue[];
+  conflictProposals: HealthIssue[];
 }
 
 export interface VerificationAuditInput {

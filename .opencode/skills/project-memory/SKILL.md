@@ -38,6 +38,10 @@ only after explicit human review.
 Use `memory_eval` to measure binary verifier decisions and evidence grounding
 against the bundled suites. Do not tune a numeric model threshold from one run.
 
+Use `memory_repair` and `/goldfish-repair` for versioned corrections of stale,
+disputed, rejected, or unsupported claims. Repair is read-only until the user
+chooses an action.
+
 For precise changes, use the `memory_admin` namespace through `execute`:
 
 - `memory_admin.cite` — add citations without rewriting the body

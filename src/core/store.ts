@@ -753,7 +753,11 @@ export class MemoryStore {
         scope,
       );
       this.updateNodeRow(revised);
-      this.insertVersion(revised, "revision", proposal.citations ?? []);
+      this.insertVersion(
+        revised,
+        proposal.reason ?? "revision",
+        proposal.citations ?? [],
+      );
       this.insertCitations(revised.id, revised.version, citations);
       this.linkTargets(revised.id, proposal.links, author, reasons);
       if (supersedesTarget && String(supersedesTarget.id) !== revised.id) {
@@ -803,7 +807,7 @@ export class MemoryStore {
     );
 
     this.writeNodeRow(node);
-    this.insertVersion(node, "created", proposal.citations ?? []);
+    this.insertVersion(node, proposal.reason ?? "created", proposal.citations ?? []);
     this.insertCitations(node.id, node.version, citations);
     this.linkTargets(node.id, proposal.links, author, reasons);
 
@@ -1934,6 +1938,14 @@ export class MemoryStore {
         node.status !== "archived" &&
         node.status !== "superseded",
     );
+    const conflictProposalNodes = this.db
+      .prepare("SELECT * FROM conflict_proposals WHERE status = 'proposed'")
+      .all()
+      .map((row) => this.rowToConflictProposal(row))
+      .filter(
+        (proposal): proposal is ConflictProposal =>
+          proposal !== undefined && !proposal.stale,
+      );
 
     const overviewNode = this.get("concept/project-overview")?.node;
     const overviewPresent = Boolean(
@@ -1972,6 +1984,7 @@ export class MemoryStore {
         auditBacklog: auditBacklogNodes.length,
         renamedIds: renamedNodes.length,
         ratificationSuggested: ratificationNodes.length,
+        conflictProposals: conflictProposalNodes.length,
       },
       uncited: issueList(uncitedNodes, () => ["no citations"]),
       stale: issueList(staleNodes, () => ["status stale"]),
@@ -1990,6 +2003,11 @@ export class MemoryStore {
       ratificationSuggested: issueList(ratificationNodes, () => [
         "model suggests ratification to verified",
       ]),
+      conflictProposals: conflictProposalNodes.slice(0, 20).map((proposal) => ({
+        id: `${proposal.nodeA.id} ↔ ${proposal.nodeB.id}`,
+        title: `${proposal.nodeA.title} ↔ ${proposal.nodeB.title}`,
+        reasons: [proposal.reason],
+      })),
     };
   }
 

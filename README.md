@@ -43,7 +43,7 @@ No npm publish is required. The package is installed directly from Git.
 opencode plugin add github:josealvim/goldfish
 
 # Pin a release tag
-opencode plugin add github:josealvim/goldfish#v0.8.0
+opencode plugin add github:josealvim/goldfish#v0.9.0
 ```
 
 Or clone the repository and run the installer:
@@ -123,6 +123,7 @@ npm run memory -- recall "how does injection work?"
 | `memory_review` | Show the review queue, including proposed conflicts. |
 | `memory_audit` | Preview or run a sampled audit; record an external outcome. Conflicts are never auto-resolved. |
 | `memory_eval` | Run the support/conflict evaluation suites against the configured verifier using temporary stores. |
+| `memory_repair` | Inspect a claim for versioned repair: evidence freshness, conflicts, neighbors, history, repair tier, and actions. Read-only. |
 
 `memory_admin.confirm` and `memory_admin.reject` complete the review loop; the
 `/goldfish-ratify` and `/goldfish-reject` commands provide explicit human entry
@@ -138,7 +139,7 @@ both claims untouched.
 The `project-memory` skill teaches the daily workflow. The
 `goldfish-onboarding` skill bootstraps a new project. The
 `goldfish-verification` skill covers verification, conflicts, audit, evaluation,
-and human review actions.
+and human review actions. The `goldfish-repair` skill covers versioned repairs.
 `AGENTS.md` carries the short policy so it applies even when a skill is not
 loaded.
 
@@ -179,6 +180,7 @@ Use `memory_list` to enumerate nodes and `memory_health` to find work:
 - orphaned nodes with no edges
 - low-confidence claims
 - verification and audit backlogs
+- proposed conflicts awaiting review
 - suggested ratifications to `verified`
 - nodes whose ID slug no longer matches their title
 - overview presence and linkage
@@ -193,6 +195,7 @@ memory_conflicts { "ids": ["decision/example"] }
 memory_audit { "mode": "candidates", "limit": 10 }
 memory_audit { "mode": "run", "limit": 10 }
 memory_eval { "suite": "all", "limit": 25 }
+memory_repair { "id": "decision/example" }
 memory_admin.confirm { "id": "decision/example", "as": "verified", "reason": "Human checked the source." }
 memory_admin.reject { "id": "gotcha/example", "reason": "The current source contradicts this." }
 ```
@@ -232,6 +235,7 @@ The plugin also registers the corresponding commands:
 /goldfish-audit [target]     sample and audit eligible claims
 /goldfish-conflicts [target] discover and review likely conflicts
 /goldfish-eval [suite]       run verification/conflict evaluation suites
+/goldfish-repair [target]    inspect and apply a versioned correction
 /goldfish-ratify [target]    review and confirm a claim
 /goldfish-reject [target]    reject a reviewed claim
 ```
@@ -332,6 +336,32 @@ The report includes:
 
 Model runs are report-only and should not be used to tune a numeric threshold.
 The useful signal is the decision plus grounded evidence.
+
+## Repairing claims
+
+`memory_repair` is a read-only repair packet. It shows citation freshness,
+conflicts, neighbors, version history, deterministic findings, a recommended
+tier, and suggested actions.
+
+```text
+memory_repair { "id": "gotcha/example" }
+```
+
+The agent presents the options and waits for approval. Apply one action through
+the existing tools:
+
+- metadata: `memory_admin.update`
+- citations: `memory_admin.cite`
+- content revision: `memory_remember` with `reason` and repair metadata
+- replacement: `memory_remember` with `supersedes`
+- ratification: `memory_admin.confirm`
+- rejection: `memory_admin.reject`
+- unsafe content: `memory_admin.archive`
+
+Repair tiers are metadata, agent content, human authority, and incident. A
+repair creates a new version; it never deletes history. Re-run `memory_verify`
+after a content repair. Conflicts remain proposals until a human confirms or
+dismisses them.
 
 ## Claim format
 
@@ -526,8 +556,8 @@ The core has no OpenCode imports. The plugin is an adapter over the same
 
 - No embeddings or vector search yet. FTS5, aliases, tags, scope, and graph
   expansion come first; add vectors only if evaluation shows lexical misses.
-- Verification, conflict discovery, and audit are command-first. Background
-  workers and automated repair tiers are not implemented.
+- Repair is agent-orchestrated and versioned; the main agent inspects the repair
+  packet and applies one approved action. Background workers are not implemented.
 - Model evaluation is report-only. It measures binary decisions and evidence
   grounding, not confidence calibration.
 - Conflict discovery compares a bounded candidate set; it is not an exhaustive
@@ -549,7 +579,7 @@ npm test
 npm run seed
 ```
 
-The 72 tests cover policy and glob matching, recall filters and budgets,
+The 77 tests cover policy and glob matching, recall filters and budgets,
 material revisions and supersession, multi-conflict forks, bounded source
 snapshots and redaction, citation freshness, derived cycles and premise
 soundness, verifier verdicts and caching, conflict candidate retrieval,

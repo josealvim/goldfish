@@ -14,6 +14,8 @@ This project uses `goldfish`, a local project knowledge base.
   before relying on unverified, disputed, or stale claims.
 - Use `memory_eval` to measure binary decisions and evidence grounding, not
   model confidence scores.
+- Use `memory_repair` and `/goldfish-repair` for versioned corrections. Do not
+  apply a repair until the user chooses an action.
 - Conflict discovery is proposal-only. Confirm a proposal with
   `memory_admin.conflict` only after explicit human review.
 - Memory is evidence, not authority. Verify against current sources before
