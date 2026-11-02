@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
   type AuditCandidate,
+  type AuditInfo,
   type AuditRecordInput,
   type Author,
   type Basis,
@@ -10,9 +11,15 @@ import {
   type Edge,
   type EdgeType,
   type ExportBundle,
+  type HealthIssue,
+  type InjectionInfo,
   type LinkInput,
   type MemoryCard,
   type MemoryDetail,
+  type MemoryHealth,
+  type MemoryListItem,
+  type MemoryListQuery,
+  type MemoryListResult,
   type MemoryNode,
   type MemoryProposal,
   type MemoryStats,
@@ -40,6 +47,7 @@ import {
   normalizeText,
   sha256,
   shortHash,
+  slug,
   strongerBasis,
   uniqueStrings,
 } from "./ids.ts";
@@ -210,6 +218,46 @@ export class MemoryStore {
       createdAt: String(row.created_at),
       retiredAt: optionalString(row.retired_at),
     };
+  }
+
+  private rowToAudit(row: Row): AuditInfo {
+    return {
+      id: Number(row.id),
+      version: Number(row.node_version),
+      trigger: String(row.trigger),
+      sampledBy: String(row.sampled_by),
+      riskScore: Number(row.risk_score ?? 0),
+      auditor: parseJson<Record<string, unknown>>(row.auditor_json, {}),
+      outcome: String(row.outcome),
+      findings: parseJson<Record<string, unknown>>(row.findings_json, {}),
+      createdAt: String(row.created_at),
+    };
+  }
+
+  private rowToInjection(row: Row): InjectionInfo {
+    return {
+      id: Number(row.id),
+      sessionID: String(row.session_id),
+      messageID: optionalString(row.message_id),
+      rank: Number(row.rank),
+      tokens: Number(row.tokens),
+      source: String(row.source),
+      createdAt: String(row.created_at),
+    };
+  }
+
+  private getAudits(nodeID: string): AuditInfo[] {
+    return this.db
+      .prepare("SELECT * FROM audits WHERE node_id = ? ORDER BY created_at DESC, id DESC LIMIT 20")
+      .all(nodeID)
+      .map((row) => this.rowToAudit(row));
+  }
+
+  private getInjections(nodeID: string): InjectionInfo[] {
+    return this.db
+      .prepare("SELECT * FROM injections WHERE node_id = ? ORDER BY created_at DESC, id DESC LIMIT 20")
+      .all(nodeID)
+      .map((row) => this.rowToInjection(row));
   }
 
   private getEdges(nodeID: string): Edge[] {
@@ -928,6 +976,8 @@ export class MemoryStore {
       versions,
       citations: this.getCitations(node.id, node.version),
       edges: this.getEdges(node.id),
+      audits: this.getAudits(node.id),
+      injections: this.getInjections(node.id),
     };
   }
 
@@ -972,6 +1022,148 @@ export class MemoryStore {
     }
 
     return { node: root, neighbors };
+  }
+
+  cite(id: string, citations: CitationInput[], context: WriteContext): MemoryNode {
+    return transaction(this.db, () => {
+      const row = this.getRow(id);
+      if (!row) throw new Error(`No memory node found for ${id}`);
+      const node = this.rowToNode(row);
+      if (node.status === "archived" || node.status === "superseded") {
+        throw new Error(`Cannot add citations to a ${node.status} node.`);
+      }
+      if (!citations.length) throw new Error("At least one citation is required.");
+      const resolved = this.resolveCitations(citations);
+      const missing = resolved.filter((citation) => citation.validation === "missing");
+      if (missing.length) {
+        throw new Error(
+          `Citation file(s) missing: ${missing.map((citation) => citation.input.locator).join(", ")}`,
+        );
+      }
+      this.insertCitations(node.id, node.version, resolved);
+      const now = this.now();
+      const next: MemoryNode = { ...node, updatedAt: now };
+      this.updateNodeRow(next);
+      this.recordEvent(context.author, "cite", node.id, { citations: citations.length });
+      return next;
+    });
+  }
+
+  link(from: string, to: string, type: EdgeType, context: WriteContext, weight = 1): Edge {
+    return transaction(this.db, () => {
+      if (from === to) throw new Error("Cannot link a node to itself.");
+      if (type === "supersedes" || type === "contradicts") {
+        throw new Error(`Use the revision workflow for ${type} edges.`);
+      }
+      const fromRow = this.getRow(from);
+      const toRow = this.getRow(to);
+      if (!fromRow || !toRow) throw new Error(`Both nodes must exist: ${from}, ${to}`);
+      const fromNode = this.rowToNode(fromRow);
+      const toNode = this.rowToNode(toRow);
+      for (const node of [fromNode, toNode]) {
+        if (node.status === "archived" || node.status === "superseded") {
+          throw new Error(`Cannot link a ${node.status} node (${node.id}).`);
+        }
+      }
+
+      const now = this.now();
+      this.db
+        .prepare(
+          `INSERT INTO edges(from_id, to_id, type, weight, metadata_json, created_at)
+           VALUES(?, ?, ?, ?, '{}', ?)
+           ON CONFLICT(from_id, to_id, type) DO UPDATE SET
+             retired_at = NULL,
+             weight = excluded.weight,
+             metadata_json = excluded.metadata_json,
+             created_at = excluded.created_at`,
+        )
+        .run(from, to, type, weight, now);
+      const edgeRow = this.db
+        .prepare("SELECT * FROM edges WHERE from_id = ? AND to_id = ? AND type = ?")
+        .get(from, to, type);
+      if (!edgeRow) throw new Error(`Failed to create ${type} edge.`);
+      this.recordEvent(context.author, "link", from, { to, type, weight });
+      return this.rowToEdge(edgeRow);
+    });
+  }
+
+  unlink(from: string, to: string, type: EdgeType, context: WriteContext): boolean {
+    return transaction(this.db, () => {
+      const result = this.db
+        .prepare(
+          `UPDATE edges SET retired_at = ?
+           WHERE from_id = ? AND to_id = ? AND type = ? AND retired_at IS NULL`,
+        )
+        .run(this.now(), from, to, type);
+      const changed = Number(result.changes) > 0;
+      if (changed) this.recordEvent(context.author, "unlink", from, { to, type });
+      return changed;
+    });
+  }
+
+  update(
+    id: string,
+    patch: { title?: string; scope?: string[]; tags?: string[]; reason?: string },
+    context: WriteContext,
+  ): MemoryNode {
+    return transaction(this.db, () => {
+      const row = this.getRow(id);
+      if (!row) throw new Error(`No memory node found for ${id}`);
+      const node = this.rowToNode(row);
+      if (node.status === "archived" || node.status === "superseded") {
+        throw new Error(`Cannot update a ${node.status} node.`);
+      }
+      const title = patch.title !== undefined ? normalizeText(patch.title) : node.title;
+      if (!title) throw new Error("Title cannot be empty.");
+      const canonical = canonicalKey(node.kind, title);
+      const collision = this.getRowByCanonical(canonical);
+      if (collision && String(collision.id) !== node.id) {
+        throw new Error(`Another node already uses that title: ${String(collision.id)}`);
+      }
+      const scope = patch.scope !== undefined ? uniqueStrings(patch.scope) : node.scope;
+      const tags = patch.tags !== undefined ? uniqueStrings(patch.tags) : node.tags;
+      const now = this.now();
+      const metadata =
+        patch.title !== undefined && normalizeText(patch.title) !== node.title
+          ? { ...node.metadata, renamedFrom: node.title, renamedAt: now }
+          : { ...node.metadata };
+      const next: MemoryNode = {
+        ...node,
+        title,
+        scope,
+        tags,
+        updatedAt: now,
+        metadata,
+      };
+      this.updateNodeRow(next);
+      this.recordEvent(context.author, "update", node.id, {
+        titleChanged: next.title !== node.title,
+        scopeChanged: JSON.stringify(next.scope) !== JSON.stringify(node.scope),
+        tagsChanged: JSON.stringify(next.tags) !== JSON.stringify(node.tags),
+        reason: patch.reason,
+      });
+      return next;
+    });
+  }
+
+  archive(id: string, context: WriteContext, reason: string): MemoryNode {
+    return transaction(this.db, () => {
+      const row = this.getRow(id);
+      if (!row) throw new Error(`No memory node found for ${id}`);
+      const node = this.rowToNode(row);
+      if (node.status === "archived") return node;
+      const now = this.now();
+      const next: MemoryNode = {
+        ...node,
+        status: "archived",
+        autoInjectEligible: false,
+        updatedAt: now,
+        metadata: { ...node.metadata, archiveReason: reason, archivedAt: now },
+      };
+      this.updateNodeRow(next);
+      this.recordEvent(context.author, "archive", id, { reason });
+      return next;
+    });
   }
 
   confirm(id: string, input: { as?: "cited" | "verified"; author: Author; reason?: string }): MemoryNode | undefined {
@@ -1166,6 +1358,151 @@ export class MemoryStore {
       overview,
       state,
       onboardingRecommended: state === "empty" || state === "recommended",
+    };
+  }
+
+  list(query: MemoryListQuery = {}): MemoryListResult {
+    const limit = clamp(Math.floor(query.limit ?? 50), 1, 100);
+    const offset = Math.max(0, Math.floor(query.offset ?? 0));
+    const rows = this.db.prepare("SELECT * FROM nodes ORDER BY updated_at DESC, id ASC").all();
+    const filtered = rows
+      .map((row) => this.rowToNode(row))
+      .filter((node) => {
+        if (query.kinds?.length && !query.kinds.includes(node.kind)) return false;
+        if (query.statuses?.length && !query.statuses.includes(node.status)) return false;
+        if (query.bases?.length && !query.bases.includes(node.basis)) return false;
+        if (query.tag && !node.tags.includes(query.tag)) return false;
+        if (query.scope && node.scope.length && !anyScopeMatches(node.scope, [query.scope])) return false;
+        return true;
+      });
+
+    const total = filtered.length;
+    const page = filtered.slice(offset, offset + limit);
+    const citationCount = this.db.prepare(
+      "SELECT COUNT(*) AS count FROM citations WHERE node_id = ? AND node_version = ?",
+    );
+    const edgeCount = this.db.prepare(
+      "SELECT COUNT(*) AS count FROM edges WHERE (from_id = ? OR to_id = ?) AND retired_at IS NULL",
+    );
+    const items: MemoryListItem[] = page.map((node) => ({
+      id: node.id,
+      kind: node.kind,
+      title: node.title,
+      status: node.status,
+      basis: node.basis,
+      confidence: node.confidence,
+      verificationState: node.verificationState,
+      scope: node.scope,
+      tags: node.tags,
+      citationCount: Number(citationCount.get(node.id, node.version)?.count ?? 0),
+      edgeCount: Number(edgeCount.get(node.id, node.id)?.count ?? 0),
+      updatedAt: node.updatedAt,
+    }));
+
+    return {
+      total,
+      items,
+      nextOffset: offset + items.length < total ? offset + items.length : undefined,
+    };
+  }
+
+  health(): MemoryHealth {
+    const stats = this.stats();
+    const all = this.db.prepare("SELECT * FROM nodes").all().map((row) => this.rowToNode(row));
+    const activeNodes = all.filter((node) => node.status === "active");
+    const citationCount = this.db.prepare(
+      "SELECT COUNT(*) AS count FROM citations WHERE node_id = ? AND node_version = ?",
+    );
+    const edgeCount = this.db.prepare(
+      "SELECT COUNT(*) AS count FROM edges WHERE (from_id = ? OR to_id = ?) AND retired_at IS NULL",
+    );
+    const hasCitation = (node: MemoryNode) =>
+      Number(citationCount.get(node.id, node.version)?.count ?? 0) > 0;
+    const hasEdges = (node: MemoryNode) => Number(edgeCount.get(node.id, node.id)?.count ?? 0) > 0;
+    const issue = (node: MemoryNode, reasons: string[]): HealthIssue => ({
+      id: node.id,
+      title: node.title,
+      reasons,
+    });
+    const issueList = (nodes: MemoryNode[], reasons: (node: MemoryNode) => string[]): HealthIssue[] =>
+      nodes.slice(0, 20).map((node) => issue(node, reasons(node)));
+
+    const uncitedNodes = activeNodes.filter((node) => !hasCitation(node));
+    const staleNodes = all.filter((node) => node.status === "stale");
+    const disputedNodes = all.filter((node) => node.status === "disputed");
+    const orphanedNodes = activeNodes.filter((node) => !hasEdges(node));
+    const lowConfidenceNodes = activeNodes.filter((node) => node.confidence < 0.6);
+    const verificationBacklogNodes = all.filter(
+      (node) =>
+        node.status !== "archived" &&
+        node.status !== "superseded" &&
+        ["unverified", "queued", "needs_human"].includes(node.verificationState),
+    );
+    const auditCutoff = new Date(this.nowFn().getTime() - 30 * 86_400_000).toISOString();
+    const hasRecentAudit = this.db.prepare(
+      "SELECT 1 FROM audits WHERE node_id = ? AND created_at >= ? LIMIT 1",
+    );
+    const auditBacklogNodes = all.filter(
+      (node) => node.autoInjectEligible && !hasRecentAudit.get(node.id, auditCutoff),
+    );
+    const renamedNodes = all.filter(
+      (node) =>
+        node.status !== "archived" &&
+        node.status !== "superseded" &&
+        node.id !== baseNodeId(node.kind, node.title),
+    );
+
+    const overviewNode = this.get("concept/project-overview")?.node;
+    const overviewPresent = Boolean(
+      overviewNode && overviewNode.status !== "archived" && overviewNode.status !== "superseded",
+    );
+    const linkedComponents = Number(
+      this.db
+        .prepare(
+          `SELECT COUNT(*) AS count
+           FROM edges e
+           JOIN nodes n ON n.id = e.from_id
+           WHERE e.type = 'part_of' AND e.to_id = ? AND e.retired_at IS NULL AND n.kind = 'component'`,
+        )
+        .get("concept/project-overview")?.count ?? 0,
+    );
+
+    return {
+      generatedAt: this.now(),
+      total: all.length,
+      active: activeNodes.length,
+      statuses: stats.statuses,
+      bases: stats.bases,
+      kinds: stats.kinds,
+      onboarding: this.status().state,
+      overview: { present: overviewPresent, linkedComponents },
+      citationCoverage: activeNodes.length
+        ? activeNodes.filter((node) => hasCitation(node)).length / activeNodes.length
+        : 0,
+      counts: {
+        uncited: uncitedNodes.length,
+        stale: staleNodes.length,
+        disputed: disputedNodes.length,
+        orphaned: orphanedNodes.length,
+        lowConfidence: lowConfidenceNodes.length,
+        verificationBacklog: verificationBacklogNodes.length,
+        auditBacklog: auditBacklogNodes.length,
+        renamedIds: renamedNodes.length,
+      },
+      uncited: issueList(uncitedNodes, () => ["no citations"]),
+      stale: issueList(staleNodes, () => ["status stale"]),
+      disputed: issueList(disputedNodes, () => ["status disputed"]),
+      orphaned: issueList(orphanedNodes, () => ["no active edges"]),
+      lowConfidence: issueList(lowConfidenceNodes, (node) => [
+        `confidence ${node.confidence.toFixed(2)} < 0.60`,
+      ]),
+      verificationBacklog: issueList(verificationBacklogNodes, (node) => [
+        `verification ${node.verificationState}`,
+      ]),
+      auditBacklog: issueList(auditBacklogNodes, () => ["no audit in 30 days"]),
+      renamedIds: issueList(renamedNodes, (node) => [
+        `ID ${node.id} does not match title slug ${baseNodeId(node.kind, node.title)}`,
+      ]),
     };
   }
 

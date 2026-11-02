@@ -1,11 +1,23 @@
 import type { Registration } from "@opencode/plugin/promise/registration";
-import { formatMemoryStatus, formatNeighbors, formatNode, formatRecall, formatRemember } from "../core/format.ts";
-import { EDGE_TYPES, NODE_KINDS, SOURCE_TYPES } from "../core/types.ts";
+import type { ToolContext } from "@opencode/plugin/promise/tool";
+import {
+  formatMemoryHealth,
+  formatMemoryList,
+  formatMemoryStatus,
+  formatNeighbors,
+  formatNode,
+  formatRecall,
+  formatRemember,
+} from "../core/format.ts";
+import { BASES, EDGE_TYPES, NODE_KINDS, NODE_STATUSES, SOURCE_TYPES } from "../core/types.ts";
 import type {
+  Basis,
+  CitationInput,
   EdgeType,
   MemoryProposal,
   NeighborOptions,
   NodeKind,
+  NodeStatus,
   RecallQuery,
 } from "../core/types.ts";
 import type { PluginContext, Runtime } from "./runtime.ts";
@@ -34,6 +46,48 @@ interface NeighborsInput {
   direction?: "out" | "in" | "both";
   depth?: number;
   limit?: number;
+}
+
+interface ListInput {
+  kinds?: NodeKind[];
+  statuses?: NodeStatus[];
+  bases?: Basis[];
+  scope?: string;
+  tag?: string;
+  limit?: number;
+  offset?: number;
+}
+
+interface CiteInput {
+  id: string;
+  citations: CitationInput[];
+  reason?: string;
+}
+
+interface AdminLinkInput {
+  from: string;
+  to: string;
+  type: EdgeType;
+  weight?: number;
+}
+
+interface UnlinkInput {
+  from: string;
+  to: string;
+  type: EdgeType;
+}
+
+interface UpdateInput {
+  id: string;
+  title?: string;
+  scope?: string[];
+  tags?: string[];
+  reason?: string;
+}
+
+interface ArchiveInput {
+  id: string;
+  reason: string;
 }
 
 const recallSchema = {
@@ -76,6 +130,24 @@ const recallSchema = {
   additionalProperties: false,
 } as const;
 
+const citationSchema = {
+  type: "object",
+  properties: {
+    type: { type: "string", enum: [...SOURCE_TYPES] },
+    locator: {
+      type: "string",
+      description: "Repo-relative file path, commit SHA, PR/issue URL, or session/message ID.",
+    },
+    excerpt: {
+      type: "string",
+      description: "Short supporting quote. Never include secrets.",
+    },
+    metadata: { type: "object", additionalProperties: true },
+  },
+  required: ["type", "locator"],
+  additionalProperties: false,
+} as const;
+
 const rememberSchema = {
   type: "object",
   properties: {
@@ -94,23 +166,7 @@ const rememberSchema = {
     tags: { type: "array", items: { type: "string" } },
     citations: {
       type: "array",
-      items: {
-        type: "object",
-        properties: {
-          type: { type: "string", enum: [...SOURCE_TYPES] },
-          locator: {
-            type: "string",
-            description: "Repo-relative file path, commit SHA, PR/issue URL, or session/message ID.",
-          },
-          excerpt: {
-            type: "string",
-            description: "Short supporting quote. Never include secrets.",
-          },
-          metadata: { type: "object", additionalProperties: true },
-        },
-        required: ["type", "locator"],
-        additionalProperties: false,
-      },
+      items: citationSchema,
       description: "Evidence for the claim. Required for cited or verified claims.",
     },
     links: {
@@ -177,6 +233,83 @@ const neighborsSchema = {
 const statusSchema = {
   type: "object",
   properties: {},
+  additionalProperties: false,
+} as const;
+
+const listSchema = {
+  type: "object",
+  properties: {
+    kinds: { type: "array", items: { type: "string", enum: [...NODE_KINDS] } },
+    statuses: { type: "array", items: { type: "string", enum: [...NODE_STATUSES] } },
+    bases: { type: "array", items: { type: "string", enum: [...BASES] } },
+    scope: { type: "string", description: "Repo-relative path or glob." },
+    tag: { type: "string" },
+    limit: { type: "integer", minimum: 1, maximum: 100 },
+    offset: { type: "integer", minimum: 0 },
+  },
+  additionalProperties: false,
+} as const;
+
+const healthSchema = {
+  type: "object",
+  properties: {},
+  additionalProperties: false,
+} as const;
+
+const citeSchema = {
+  type: "object",
+  properties: {
+    id: { type: "string", description: "Memory node ID." },
+    citations: { type: "array", items: citationSchema, minItems: 1 },
+    reason: { type: "string" },
+  },
+  required: ["id", "citations"],
+  additionalProperties: false,
+} as const;
+
+const adminLinkSchema = {
+  type: "object",
+  properties: {
+    from: { type: "string" },
+    to: { type: "string" },
+    type: { type: "string", enum: [...EDGE_TYPES] },
+    weight: { type: "number" },
+  },
+  required: ["from", "to", "type"],
+  additionalProperties: false,
+} as const;
+
+const unlinkSchema = {
+  type: "object",
+  properties: {
+    from: { type: "string" },
+    to: { type: "string" },
+    type: { type: "string", enum: [...EDGE_TYPES] },
+  },
+  required: ["from", "to", "type"],
+  additionalProperties: false,
+} as const;
+
+const updateSchema = {
+  type: "object",
+  properties: {
+    id: { type: "string" },
+    title: { type: "string" },
+    scope: { type: "array", items: { type: "string" } },
+    tags: { type: "array", items: { type: "string" } },
+    reason: { type: "string" },
+  },
+  required: ["id"],
+  additionalProperties: false,
+} as const;
+
+const archiveSchema = {
+  type: "object",
+  properties: {
+    id: { type: "string" },
+    reason: { type: "string" },
+  },
+  required: ["id", "reason"],
   additionalProperties: false,
 } as const;
 
@@ -329,5 +462,183 @@ export async function registerTools(ctx: PluginContext, runtime: Runtime): Promi
         };
       },
     });
+
+    editor.add({
+      name: "list",
+      description:
+        "List memory nodes with filters. Use to enumerate components, uncited claims, stale nodes, or a scope. " +
+        "Read-only; use memory_recall for ranked search and memory_health for diagnostics.",
+      input: listSchema,
+      options: { namespace: "memory", codemode: false },
+      execute: async (raw) => {
+        const input = (raw ?? {}) as unknown as ListInput;
+        const result = runtime.store.list({
+          kinds: input.kinds,
+          statuses: input.statuses,
+          bases: input.bases,
+          scope: input.scope,
+          tag: input.tag,
+          limit: input.limit,
+          offset: input.offset,
+        });
+        return {
+          content: formatMemoryList(result),
+          metadata: {
+            total: result.total,
+            returned: result.items.length,
+            nextOffset: result.nextOffset,
+          },
+        };
+      },
+    });
+
+    editor.add({
+      name: "health",
+      description:
+        "Show memory health with actionable IDs: uncited, stale, disputed, orphaned, low-confidence, " +
+        "verification backlog, audit backlog, renamed IDs, overview linkage, and citation coverage.",
+      input: healthSchema,
+      options: { namespace: "memory", codemode: false },
+      execute: async () => {
+        const health = runtime.store.health();
+        return {
+          content: formatMemoryHealth(health),
+          metadata: health,
+        };
+      },
+    });
+
+    editor.namespace({
+      name: "memory_admin",
+      description: "Precise memory maintenance: cite, link, unlink, update, and archive nodes.",
+    });
+
+    editor.add({
+      name: "cite",
+      description:
+        "Add citations to an existing memory node without rewriting its body. File citations must exist. " +
+        "This adds evidence; it does not promote the claim's basis or verification state.",
+      input: citeSchema,
+      options: { namespace: "memory_admin", codemode: true },
+      execute: async (raw, context) => {
+        const input = raw as unknown as CiteInput;
+        await assertWrite(ctx, runtime, context, "memory.cite", [input.id]);
+        const node = runtime.store.cite(input.id, input.citations, writeContext(context));
+        const detail = runtime.store.get(node.id);
+        return {
+          content: detail ? formatNode(detail) : `Added citations to ${node.id}.`,
+          metadata: { nodeID: node.id, citations: input.citations.length },
+        };
+      },
+    });
+
+    editor.add({
+      name: "link",
+      description:
+        "Add or reactivate a typed edge between two memory nodes. Use part_of, applies_to, depends_on, " +
+        "implements, documents, derived_from, related_to, or revises. Supersedes/contradicts use the revision workflow.",
+      input: adminLinkSchema,
+      options: { namespace: "memory_admin", codemode: true },
+      execute: async (raw, context) => {
+        const input = raw as unknown as AdminLinkInput;
+        await assertWrite(ctx, runtime, context, "memory.link", [input.from, input.to]);
+        const edge = runtime.store.link(input.from, input.to, input.type, writeContext(context), input.weight);
+        return {
+          content: `Linked ${edge.fromID} --${edge.type}--> ${edge.toID}.`,
+          metadata: edge,
+        };
+      },
+    });
+
+    editor.add({
+      name: "unlink",
+      description: "Retire an active typed edge between two memory nodes without deleting history.",
+      input: unlinkSchema,
+      options: { namespace: "memory_admin", codemode: true },
+      execute: async (raw, context) => {
+        const input = raw as unknown as UnlinkInput;
+        await assertWrite(ctx, runtime, context, "memory.unlink", [input.from, input.to]);
+        const removed = runtime.store.unlink(input.from, input.to, input.type, writeContext(context));
+        return {
+          content: removed
+            ? `Unlinked ${input.from} --${input.type}--> ${input.to}.`
+            : `No active ${input.type} edge found from ${input.from} to ${input.to}.`,
+          metadata: { removed },
+        };
+      },
+    });
+
+    editor.add({
+      name: "update",
+      description:
+        "Update a memory node's display title, scope, or tags without rewriting its body. The node ID and " +
+        "canonical deduplication key remain stable; use memory_remember for semantic revisions.",
+      input: updateSchema,
+      options: { namespace: "memory_admin", codemode: true },
+      execute: async (raw, context) => {
+        const input = raw as unknown as UpdateInput;
+        await assertWrite(ctx, runtime, context, "memory.update", [input.id]);
+        const node = runtime.store.update(
+          input.id,
+          { title: input.title, scope: input.scope, tags: input.tags, reason: input.reason },
+          writeContext(context),
+        );
+        const detail = runtime.store.get(node.id);
+        return {
+          content: detail ? formatNode(detail) : `Updated ${node.id}.`,
+          metadata: { nodeID: node.id, title: node.title },
+        };
+      },
+    });
+
+    editor.add({
+      name: "archive",
+      description:
+        "Soft-delete a memory node. The node, citations, edges, versions, and audit history remain available " +
+        "through memory_get; default recall excludes archived nodes.",
+      input: archiveSchema,
+      options: { namespace: "memory_admin", codemode: true },
+      execute: async (raw, context) => {
+        const input = raw as unknown as ArchiveInput;
+        await assertWrite(ctx, runtime, context, "memory.archive", [input.id], true);
+        const node = runtime.store.archive(input.id, writeContext(context), input.reason);
+        const detail = runtime.store.get(node.id);
+        return {
+          content: detail ? formatNode(detail) : `Archived ${node.id}.`,
+          metadata: { nodeID: node.id, status: node.status },
+        };
+      },
+    });
+  });
+}
+
+function writeContext(context: ToolContext) {
+  return {
+    author: {
+      type: "agent" as const,
+      id: String(context.agent),
+      sessionID: String(context.sessionID),
+    },
+    agent: String(context.agent),
+    sessionID: String(context.sessionID),
+    messageID: String(context.messageID),
+  };
+}
+
+async function assertWrite(
+  ctx: PluginContext,
+  runtime: Runtime,
+  context: ToolContext,
+  action: string,
+  resources: string[],
+  force = false,
+): Promise<void> {
+  if (!force && !runtime.requireWritePermission) return;
+  await ctx.permission.assert({
+    sessionID: context.sessionID,
+    agent: context.agent,
+    action,
+    resources,
+    source: { type: "tool", messageID: context.messageID, id: context.id },
   });
 }

@@ -32,7 +32,7 @@ No npm publish is required. The package is installed directly from Git.
 opencode plugin add github:josealvim/goldfish
 
 # Pin a release tag
-opencode plugin add github:josealvim/goldfish#v0.2.1
+opencode plugin add github:josealvim/goldfish#v0.3.0
 ```
 
 Or clone the repository and run the installer:
@@ -104,6 +104,8 @@ npm run memory -- recall "how does injection work?"
 | `memory_get` | Read a node in full, including citations, relationships, and version history. |
 | `memory_neighbors` | Walk the knowledge graph one or two hops. |
 | `memory_status` | Show memory coverage and whether onboarding is recommended. |
+| `memory_list` | List nodes by kind, status, basis, scope, or tag, with citation and edge counts. |
+| `memory_health` | Show uncited, stale, disputed, orphaned, low-confidence, backlog, and renamed-ID diagnostics. |
 
 The `project-memory` skill teaches the daily workflow. The
 `goldfish-onboarding` skill bootstraps a new project. `AGENTS.md` carries the
@@ -137,6 +139,32 @@ The onboarding workflow:
 If memory is empty and you did not ask to onboard, the model should suggest
 `/goldfish-onboard` rather than writing unsolicited claims.
 
+## Maintenance
+
+Use `memory_list` to enumerate nodes and `memory_health` to find work:
+
+- uncited active nodes
+- stale or disputed claims
+- orphaned nodes with no edges
+- low-confidence claims
+- verification and audit backlogs
+- nodes whose ID slug no longer matches their title
+- overview presence and linkage
+- citation coverage
+
+Precise changes use the `memory_admin` namespace through Code Mode:
+
+```text
+memory_admin.cite      add citations without rewriting the claim
+memory_admin.link      add or reactivate a typed edge
+memory_admin.unlink    retire an edge without deleting history
+memory_admin.update    change title, scope, or tags; the ID stays stable
+memory_admin.archive   soft-delete; history remains in memory_get
+```
+
+Use `memory_remember` for semantic revisions. `memory_admin` is for maintenance,
+not for rewriting claims.
+
 ## What happens on a prompt
 
 1. The `prompt` hook extracts a query from the user message and attached file
@@ -166,6 +194,8 @@ npm run memory -- remember --json ./claim.json
 # Inspect
 npm run memory -- get decision/use-sqlite-with-fts5-for-project-memory
 npm run memory -- neighbors decision/use-sqlite-with-fts5-for-project-memory --depth 2
+npm run memory -- list --kind decision --status active --limit 20
+npm run memory -- health
 npm run memory -- stats
 
 # Review and quality loop
@@ -354,11 +384,11 @@ npm test
 npm run seed
 ```
 
-The 43 tests cover policy and glob matching, recall filters and budgets,
+The 52 tests cover policy and glob matching, recall filters and budgets,
 material revisions and supersession, multi-conflict forks, audit sampling and
-outcomes, export/import round-trips, plugin tool registration, auto-recall and
-fallback hooks, skill and command registration, onboarding status, and CLI
-end-to-end and error paths.
+outcomes, export/import round-trips, observe/edit operations, plugin tool
+registration, auto-recall and fallback hooks, skill and command registration,
+onboarding status, and CLI end-to-end and error paths.
 
 ## Safety
 

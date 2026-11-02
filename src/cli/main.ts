@@ -5,6 +5,8 @@ import { MemoryStore } from "../core/store.ts";
 import { defaultDbPath, ensureParent, findProjectRoot } from "../core/paths.ts";
 import { importBundle, type ImportBundle } from "../core/import.ts";
 import {
+  formatMemoryHealth,
+  formatMemoryList,
   formatNeighbors,
   formatNode,
   formatRecall,
@@ -14,9 +16,11 @@ import {
 } from "../core/format.ts";
 import type {
   AuditRecordInput,
+  Basis,
   EdgeType,
   MemoryProposal,
   NodeKind,
+  NodeStatus,
   RecallQuery,
 } from "../core/types.ts";
 
@@ -217,6 +221,29 @@ async function main(): Promise<void> {
           return;
         }
         console.log(formatNeighbors(result));
+      });
+      return;
+    }
+
+    case "list": {
+      const query = {
+        kinds: splitList([...flagAll(args, "kind"), ...flagAll(args, "kinds")]) as NodeKind[],
+        statuses: splitList([...flagAll(args, "status"), ...flagAll(args, "statuses")]) as NodeStatus[],
+        bases: splitList([...flagAll(args, "basis"), ...flagAll(args, "bases")]) as Basis[],
+        scope: flag(args, "scope"),
+        tag: flag(args, "tag"),
+        limit: numberFlag(args, "limit"),
+        offset: numberFlag(args, "offset"),
+      };
+      await withStore(args, (store) => {
+        console.log(formatMemoryList(store.list(query)));
+      });
+      return;
+    }
+
+    case "health": {
+      await withStore(args, (store) => {
+        console.log(formatMemoryHealth(store.health()));
       });
       return;
     }
@@ -447,6 +474,8 @@ Commands:
   remember --json <file-or-json>  Propose a memory node
   get <id>                        Show a node, its sources, and relationships
   neighbors <id>                  Walk the knowledge graph
+  list                            List nodes with kind/status/scope/tag filters
+  health                          Show memory quality diagnostics
   review                          Show unverified, disputed, and stale nodes
   confirm <id> [--as cited|verified]
   reject <id> --reason <text>

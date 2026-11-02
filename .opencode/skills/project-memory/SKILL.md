@@ -16,6 +16,23 @@ Call `memory_status` before a large planning task. If onboarding is `empty` or
 `recommended`, suggest `/goldfish-onboard`. If it is `partial`, suggest filling
 the missing categories. Do not run a full onboarding pass unless the user asks.
 
+## Maintenance
+
+Use `memory_health` to find uncited, stale, disputed, orphaned, low-confidence,
+verification-backlog, and audit-backlog nodes. Use `memory_list` to enumerate
+nodes by kind, status, basis, scope, or tag.
+
+For precise changes, use the `memory_admin` namespace through `execute`:
+
+- `memory_admin.cite` — add citations without rewriting the body
+- `memory_admin.link` / `unlink` — adjust typed edges
+- `memory_admin.update` — change title, scope, or tags; the node ID and canonical
+  key stay stable
+- `memory_admin.archive` — soft-delete a node; history remains in `memory_get`
+
+Do not re-send a whole claim just to add a citation or a link. Use
+`memory_remember` for semantic revisions.
+
 ## Before planning unfamiliar work
 
 1. Call `memory_recall` with the domain terms and the paths or packages you

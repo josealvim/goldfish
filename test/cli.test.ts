@@ -50,6 +50,15 @@ test("CLI end-to-end: seed, recall, eval, export/import, review, and audit", { t
     assertOk(review);
     assert.match(String(review.stdout), /inferred claim awaiting verification/);
 
+    const listed = runCli(["list", "--kind", "decision", "--limit", "3", "--db", db, "--project", repoRoot]);
+    assertOk(listed);
+    assert.match(String(listed.stdout), /Memory list/);
+
+    const health = runCli(["health", "--db", db, "--project", repoRoot]);
+    assertOk(health);
+    assert.match(String(health.stdout), /# Memory health/);
+    assert.match(String(health.stdout), /Citation coverage/);
+
     const exported = runCli(["export", exportDir, "--db", db, "--project", repoRoot]);
     assertOk(exported);
     for (const file of ["nodes.jsonl", "sources.jsonl", "citations.jsonl", "edges.jsonl", "manifest.json"]) {

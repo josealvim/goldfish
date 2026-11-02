@@ -26,6 +26,8 @@ This project has a local knowledge base exposed through the \`memory\` tools.
 
 - Call \`memory_status\` before a large planning task. If onboarding is empty or
   recommended, suggest \`/goldfish-onboard\`.
+- Use \`memory_health\` and \`memory_list\` for maintenance; use the
+  \`memory_admin\` namespace for precise cite/link/unlink/update/archive changes.
 - Before planning unfamiliar work, call \`memory_recall\` with domain terms and the
   paths you expect to touch.
 - Read the evidence cards, then call \`memory_get\` for a full claim or

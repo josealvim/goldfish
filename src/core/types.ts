@@ -231,6 +231,97 @@ export interface MemoryDetail {
   versions: NodeVersion[];
   citations: Citation[];
   edges: Edge[];
+  audits: AuditInfo[];
+  injections: InjectionInfo[];
+}
+
+export interface AuditInfo {
+  id: number;
+  version: number;
+  trigger: string;
+  sampledBy: string;
+  riskScore: number;
+  auditor: Record<string, unknown>;
+  outcome: string;
+  findings: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface InjectionInfo {
+  id: number;
+  sessionID: string;
+  messageID?: string;
+  rank: number;
+  tokens: number;
+  source: string;
+  createdAt: string;
+}
+
+export interface MemoryListQuery {
+  kinds?: NodeKind[];
+  statuses?: NodeStatus[];
+  bases?: Basis[];
+  scope?: string;
+  tag?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface MemoryListItem {
+  id: string;
+  kind: NodeKind;
+  title: string;
+  status: NodeStatus;
+  basis: Basis;
+  confidence: number;
+  verificationState: VerificationState;
+  scope: string[];
+  tags: string[];
+  citationCount: number;
+  edgeCount: number;
+  updatedAt: string;
+}
+
+export interface MemoryListResult {
+  total: number;
+  items: MemoryListItem[];
+  nextOffset?: number;
+}
+
+export interface HealthIssue {
+  id: string;
+  title: string;
+  reasons: string[];
+}
+
+export interface MemoryHealth {
+  generatedAt: string;
+  total: number;
+  active: number;
+  statuses: Record<string, number>;
+  bases: Record<string, number>;
+  kinds: Record<string, number>;
+  onboarding: OnboardingState;
+  overview: { present: boolean; linkedComponents: number };
+  citationCoverage: number;
+  counts: {
+    uncited: number;
+    stale: number;
+    disputed: number;
+    orphaned: number;
+    lowConfidence: number;
+    verificationBacklog: number;
+    auditBacklog: number;
+    renamedIds: number;
+  };
+  uncited: HealthIssue[];
+  stale: HealthIssue[];
+  disputed: HealthIssue[];
+  orphaned: HealthIssue[];
+  lowConfidence: HealthIssue[];
+  verificationBacklog: HealthIssue[];
+  auditBacklog: HealthIssue[];
+  renamedIds: HealthIssue[];
 }
 
 export interface MemoryStats {

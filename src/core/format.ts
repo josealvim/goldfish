@@ -2,6 +2,8 @@ import type {
   Citation,
   MemoryCard,
   MemoryDetail,
+  MemoryHealth,
+  MemoryListResult,
   MemoryStats,
   MemoryStatus,
   NeighborResult,
@@ -116,6 +118,22 @@ export function formatNode(detail: MemoryDetail): string {
       lines.push(`- v${version.version}: ${version.status}/${version.basis} — ${version.reason ?? "revision"} (${version.createdAt})`);
     }
   }
+  if (detail.audits.length) {
+    lines.push("", "## Audits");
+    for (const audit of detail.audits.slice(0, 10)) {
+      lines.push(
+        `- ${audit.createdAt} · v${audit.version} · ${audit.trigger} · ${audit.outcome} · risk ${audit.riskScore.toFixed(2)} · by ${audit.sampledBy}`,
+      );
+    }
+  }
+  if (detail.injections.length) {
+    lines.push("", "## Injections");
+    for (const injection of detail.injections.slice(0, 10)) {
+      lines.push(
+        `- ${injection.createdAt} · ${injection.source} · session ${injection.sessionID}${injection.messageID ? ` · message ${injection.messageID}` : ""} · rank ${injection.rank} · ${injection.tokens} tokens`,
+      );
+    }
+  }
   return lines.join("\n");
 }
 
@@ -179,5 +197,53 @@ export function formatMemoryStatus(status: MemoryStatus): string {
   } else if (status.state === "partial") {
     lines.push("Suggested: /goldfish-onboard to fill the missing categories");
   }
+  return lines.join("\n");
+}
+
+export function formatMemoryList(result: MemoryListResult): string {
+  if (!result.items.length) return "No memory nodes matched.";
+  const lines = [`Memory list: ${result.total} node${result.total === 1 ? "" : "s"}`, ""];
+  for (const item of result.items) {
+    lines.push(
+      `- [${item.kind} · ${item.status} · ${item.basis} · ${item.confidence.toFixed(2)}] ${item.title}`,
+      `  ID: ${item.id} · citations=${item.citationCount} · edges=${item.edgeCount} · scope=${displayScope(item.scope)}`,
+    );
+  }
+  if (result.nextOffset !== undefined) lines.push("", `Next offset: ${result.nextOffset}`);
+  return lines.join("\n");
+}
+
+function healthIssueSection(label: string, issues: MemoryHealth["uncited"], total: number): string[] {
+  if (!total) return [`${label}: none`];
+  if (!issues.length) return [`${label}: ${total} (not listed)`];
+  return [
+    `${label}: ${total}`,
+    ...issues.map(
+      (issue) => `- ${issue.id} — ${issue.title} (${issue.reasons.join("; ")})`,
+    ),
+  ];
+}
+
+export function formatMemoryHealth(health: MemoryHealth): string {
+  const lines = [
+    `# Memory health`,
+    `Generated: ${health.generatedAt}`,
+    `Nodes: ${health.total} total · ${health.active} active`,
+    countSection("Statuses", health.statuses),
+    countSection("Bases", health.bases),
+    countSection("Kinds", health.kinds),
+    `Onboarding: ${health.onboarding}`,
+    `Overview: ${health.overview.present ? "present" : "missing"} · linked components: ${health.overview.linkedComponents}`,
+    `Citation coverage: ${(health.citationCoverage * 100).toFixed(1)}%`,
+    "",
+    ...healthIssueSection("Uncited", health.uncited, health.counts.uncited),
+    ...healthIssueSection("Stale", health.stale, health.counts.stale),
+    ...healthIssueSection("Disputed", health.disputed, health.counts.disputed),
+    ...healthIssueSection("Orphaned", health.orphaned, health.counts.orphaned),
+    ...healthIssueSection("Low confidence", health.lowConfidence, health.counts.lowConfidence),
+    ...healthIssueSection("Verification backlog", health.verificationBacklog, health.counts.verificationBacklog),
+    ...healthIssueSection("Audit backlog", health.auditBacklog, health.counts.auditBacklog),
+    ...healthIssueSection("Renamed IDs", health.renamedIds, health.counts.renamedIds),
+  ];
   return lines.join("\n");
 }

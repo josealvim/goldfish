@@ -172,7 +172,20 @@ test("registers agent tools and executes recall/get", async () => {
   await withPlugin(async (fake, runtime) => {
     const created = seed(runtime);
     await registerTools(fake.ctx, runtime);
-    assert.deepEqual([...fake.tools.keys()].sort(), ["get", "neighbors", "recall", "remember", "status"]);
+    assert.deepEqual([...fake.tools.keys()].sort(), [
+      "archive",
+      "cite",
+      "get",
+      "health",
+      "link",
+      "list",
+      "neighbors",
+      "recall",
+      "remember",
+      "status",
+      "unlink",
+      "update",
+    ]);
 
     const recall = fake.tools.get("recall")!;
     const recalled = await recall.execute({ query: "injection policy" }, toolContext);
@@ -240,6 +253,80 @@ test("memory_status reports onboarding progress through empty, recommended, part
     assert.match(complete.content, /Onboarding: complete/);
     assert.equal(complete.metadata.state, "complete");
     assert.equal(complete.metadata.onboardingRecommended, false);
+  });
+});
+
+test("memory_list and memory_health expose read-only diagnostics", async () => {
+  await withPlugin(async (fake, runtime) => {
+    seed(runtime);
+    await registerTools(fake.ctx, runtime);
+
+    const list = fake.tools.get("list")!;
+    const listed = await list.execute({ kinds: ["decision"], limit: 10 }, toolContext);
+    assert.match(String(listed.content), /Memory list/);
+    assert.match(String(listed.content), /Injection policy/);
+    assert.equal((listed.metadata as any).total, 1);
+
+    const health = fake.tools.get("health")!;
+    const report = await health.execute({}, toolContext);
+    assert.match(String(report.content), /# Memory health/);
+    assert.match(String(report.content), /Citation coverage/);
+    assert.equal((report.metadata as any).onboarding, "recommended");
+  });
+});
+
+test("memory_admin tools cite, link, unlink, update, and archive", async () => {
+  await withPlugin(async (fake, runtime) => {
+    const first = seed(runtime, "Admin first");
+    const second = seed(runtime, "Admin second");
+    await registerTools(fake.ctx, runtime);
+
+    for (const name of ["cite", "link", "unlink", "update", "archive"]) {
+      assert.equal(fake.tools.get(name)?.options?.namespace, "memory_admin", `${name} namespace`);
+    }
+
+    const cite = fake.tools.get("cite")!;
+    const cited = await cite.execute(
+      { id: first.node!.id, citations: [{ type: "file", locator: "docs/decisions.md" }] },
+      toolContext,
+    );
+    assert.match(String(cited.content), /## Sources/);
+
+    const link = fake.tools.get("link")!;
+    await link.execute(
+      { from: first.node!.id, to: second.node!.id, type: "depends_on" },
+      toolContext,
+    );
+    assert.ok(
+      runtime.store
+        .get(first.node!.id)
+        ?.edges.some((edge) => edge.type === "depends_on" && edge.toID === second.node!.id),
+    );
+
+    const unlink = fake.tools.get("unlink")!;
+    await unlink.execute(
+      { from: first.node!.id, to: second.node!.id, type: "depends_on" },
+      toolContext,
+    );
+    assert.equal(
+      runtime.store.get(first.node!.id)?.edges.some((edge) => edge.type === "depends_on"),
+      false,
+    );
+
+    const update = fake.tools.get("update")!;
+    const updated = await update.execute(
+      { id: first.node!.id, title: "Admin renamed", scope: ["src/**"], tags: ["admin"] },
+      toolContext,
+    );
+    assert.match(String(updated.content), /Admin renamed/);
+    assert.equal(runtime.store.get(first.node!.id)?.node.title, "Admin renamed");
+    assert.equal(runtime.store.get(first.node!.id)?.node.id, first.node!.id);
+
+    const archive = fake.tools.get("archive")!;
+    await archive.execute({ id: second.node!.id, reason: "test" }, toolContext);
+    assert.equal(runtime.store.get(second.node!.id)?.node.status, "archived");
+    assert.equal(fake.permissions.length, 1);
+    assert.equal(fake.permissions[0].action, "memory.archive");
   });
 });
 
