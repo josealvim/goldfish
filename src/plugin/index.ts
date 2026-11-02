@@ -5,7 +5,7 @@ import { registerSkill } from "./skill.ts";
 import { registerTools } from "./tools.ts";
 
 export default Plugin.define({
-  id: "monkey.project-memory",
+  id: "goldfish.project-memory",
   async setup(ctx) {
     const runtime = await createRuntime(ctx);
     const tools = await registerTools(ctx, runtime);

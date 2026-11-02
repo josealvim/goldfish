@@ -1,8 +1,8 @@
-# monkey-memory
+# goldfish
 
 Local-first project memory for OpenCode agents.
 
-`monkey-memory` gives agents a small, queryable knowledge base of project
+`goldfish` gives agents a small, queryable knowledge base of project
 decisions, gotchas, patterns, components, documents, and past learnings. Agents
 retrieve evidence cards with citations instead of reading whole files, and they
 can contribute durable claims back to the project.
@@ -29,25 +29,25 @@ No npm publish is required. The package is installed directly from Git.
 ### OpenCode Git installer
 
 ```sh
-opencode plugin add github:josealvim/monkey-memory
+opencode plugin add github:josealvim/goldfish
 
 # Pin a release tag
-opencode plugin add github:josealvim/monkey-memory#v0.1.0
+opencode plugin add github:josealvim/goldfish#v0.1.1
 ```
 
 Or clone the repository and run the installer:
 
 ```sh
-git clone https://github.com/josealvim/monkey-memory.git
-cd monkey-memory
+git clone https://github.com/josealvim/goldfish.git
+cd goldfish
 ./install.sh
 ```
 
 ### Manual Git install
 
 ```sh
-git clone https://github.com/josealvim/monkey-memory.git \
-  ~/.config/opencode/plugins/monkey-memory
+git clone https://github.com/josealvim/goldfish.git \
+  ~/.config/opencode/plugins/goldfish
 ```
 
 Add the cloned directory to `~/.config/opencode/opencode.json`:
@@ -55,12 +55,12 @@ Add the cloned directory to `~/.config/opencode/opencode.json`:
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["/home/<you>/.config/opencode/plugins/monkey-memory"]
+  "plugins": ["/home/<you>/.config/opencode/plugins/goldfish"]
 }
 ```
 
-For a project-local install, clone into `.opencode/plugins/monkey-memory` and
-add `"./.opencode/plugins/monkey-memory"` to that project's config.
+For a project-local install, clone into `.opencode/plugins/goldfish` and
+add `"./.opencode/plugins/goldfish"` to that project's config.
 
 If a project already has the local development wrapper at
 `.opencode/plugins/project-memory` configured, do not also install the global
@@ -82,7 +82,7 @@ The plugin uses one SQLite database per project:
 ~/.local/share/opencode/projects/<project-key>/memory.sqlite
 ```
 
-Override it with `--db` or `MONKEY_MEMORY_DB`.
+Override it with `--db` or `GOLDFISH_DB`.
 
 ## Develop in this repository
 

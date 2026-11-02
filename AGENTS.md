@@ -2,7 +2,7 @@
 
 ## Project memory
 
-This project uses `monkey-memory`, a local project knowledge base.
+This project uses `goldfish`, a local project knowledge base.
 
 - Before planning unfamiliar work, call `memory_recall` with domain terms and
   the paths you expect to touch.

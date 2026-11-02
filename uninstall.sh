@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SPEC="${1:-${MONKEY_MEMORY_SPEC:-github:josealvim/monkey-memory}}"
-DEST="${MONKEY_MEMORY_DIR:-${HOME}/.config/opencode/plugins/monkey-memory}"
+SPEC="${1:-${GOLDFISH_SPEC:-${MONKEY_MEMORY_SPEC:-github:josealvim/goldfish}}}"
+DEST="${GOLDFISH_DIR:-${MONKEY_MEMORY_DIR:-${HOME}/.config/opencode/plugins/goldfish}}"
 
 if ! command -v opencode >/dev/null 2>&1; then
   echo "error: opencode is not on PATH" >&2

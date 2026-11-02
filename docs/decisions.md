@@ -1,7 +1,7 @@
 # Project memory decisions
 
 This file is both human documentation and a citation source for the project
-memory seed. It records the durable decisions behind the `monkey-memory`
+memory seed. It records the durable decisions behind the `goldfish`
 extension.
 
 ## Local-first storage

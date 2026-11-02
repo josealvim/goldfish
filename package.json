@@ -1,16 +1,16 @@
 {
-  "name": "monkey-memory",
-  "version": "0.1.0",
+  "name": "goldfish",
+  "version": "0.1.1",
   "description": "Local-first project memory for OpenCode agents",
   "type": "module",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/josealvim/monkey-memory.git"
+    "url": "git+https://github.com/josealvim/goldfish.git"
   },
-  "homepage": "https://github.com/josealvim/monkey-memory",
+  "homepage": "https://github.com/josealvim/goldfish",
   "bugs": {
-    "url": "https://github.com/josealvim/monkey-memory/issues"
+    "url": "https://github.com/josealvim/goldfish/issues"
   },
   "keywords": [
     "opencode",
@@ -18,7 +18,8 @@
     "memory",
     "knowledge-graph",
     "sqlite",
-    "ai-agents"
+    "ai-agents",
+    "goldfish"
   ],
   "exports": {
     ".": "./index.ts"

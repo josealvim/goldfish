@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Install monkey-memory directly from GitHub. No npm publish is involved.
+# Install goldfish directly from GitHub. No npm publish is involved.
 #
 # Usage:
 #   ./install.sh
-#   ./install.sh github:josealvim/monkey-memory#v0.1.0
-#   MONKEY_MEMORY_SPEC=github:josealvim/monkey-memory ./install.sh
+#   ./install.sh github:josealvim/goldfish#v0.1.1
+#   GOLDFISH_SPEC=github:josealvim/goldfish ./install.sh
 
-SPEC="${1:-${MONKEY_MEMORY_SPEC:-github:josealvim/monkey-memory}}"
-DEST="${MONKEY_MEMORY_DIR:-${HOME}/.config/opencode/plugins/monkey-memory}"
+SPEC="${1:-${GOLDFISH_SPEC:-${MONKEY_MEMORY_SPEC:-github:josealvim/goldfish}}}"
+DEST="${GOLDFISH_DIR:-${MONKEY_MEMORY_DIR:-${HOME}/.config/opencode/plugins/goldfish}}"
 
 if ! command -v opencode >/dev/null 2>&1; then
   echo "error: opencode is not on PATH" >&2
@@ -31,7 +31,7 @@ if ! command -v git >/dev/null 2>&1; then
   exit 1
 fi
 
-REPO="${MONKEY_MEMORY_REPO:-https://github.com/josealvim/monkey-memory.git}"
+REPO="${GOLDFISH_REPO:-${MONKEY_MEMORY_REPO:-https://github.com/josealvim/goldfish.git}}"
 if [ -d "${DEST}/.git" ]; then
   git -C "${DEST}" pull --ff-only
 else

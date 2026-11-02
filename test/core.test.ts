@@ -6,7 +6,7 @@ import path from "node:path";
 import { MemoryStore } from "../src/core/store.ts";
 
 async function withStore(callback: (store: MemoryStore, root: string) => Promise<void> | void): Promise<void> {
-  const root = mkdtempSync(path.join(tmpdir(), "monkey-memory-"));
+  const root = mkdtempSync(path.join(tmpdir(), "goldfish-"));
   mkdirSync(path.join(root, "docs"), { recursive: true });
   writeFileSync(path.join(root, "docs", "decisions.md"), "# Decisions\n\nUse SQLite for local project memory.\n");
   const store = await MemoryStore.open({ dbPath: ":memory:", projectRoot: root });

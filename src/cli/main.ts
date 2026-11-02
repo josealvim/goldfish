@@ -559,7 +559,7 @@ function writeJsonLines(file: string, values: unknown[]): void {
 }
 
 function printHelp(): void {
-  console.log(`monkey-memory — local-first project memory for OpenCode
+  console.log(`goldfish — local-first project memory for OpenCode
 
 Usage:
   memory <command> [options]
