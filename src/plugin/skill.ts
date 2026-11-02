@@ -32,8 +32,10 @@ export const FALLBACK_CONTENT = `# Project memory
 
 This project has a local knowledge base exposed through the \`memory\` tools.
 
-- Call \`memory_status\` before a large planning task. If onboarding is empty or
-  recommended, suggest \`/goldfish-onboard\`.
+- Call \`memory_status\` before a large planning task. For an unfamiliar project,
+  call \`memory_scan\` to map manifests, entry points, docs, and candidate
+  components without writing memory. If onboarding is empty or recommended,
+  suggest \`/goldfish-onboard\`.
 - Use \`memory_health\` and \`memory_list\` for maintenance; use the
   \`memory_admin\` namespace for precise confirm/reject/cite/link/unlink/update/
   archive/conflict changes.
@@ -77,11 +79,11 @@ premises are already cited or verified and linked with \`derived_from\`.
 
 ## Workflow
 
-1. Call \`memory_status\` and \`memory_recall\` for the project overview,
-   architecture, decisions, conventions, and gotchas.
-2. Read at most 12 files / 4,000 lines: README, manifests, docs/ADRs, CI config,
-   build/test entry points, and top-level layout. Do not read generated code or
-   secrets.
+1. Call \`memory_status\`, \`memory_scan\`, and \`memory_recall\` for the project
+   overview, architecture, decisions, conventions, and gotchas.
+2. Use the scan to choose files. Read at most 12 files / 4,000 lines: README,
+   manifests, docs/ADRs, CI config, build/test entry points, and top-level
+   layout. Do not read generated code or secrets.
 3. Create exactly \`concept/project-overview\` with the title \`Project overview\`
    and leave its scope empty. Create 3–5 \`component\` nodes with scope and
    \`part_of\` links to the overview.

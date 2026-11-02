@@ -170,6 +170,13 @@ agent-assisted ingestion: a skill or command reads the source and proposes
 claims with citations. The adapter order is manual/docs, then the repository
 map, then Git/PR, then opt-in session learnings.
 
+`memory_scan` implements the first structural pass as a read-only report: it
+enumerates bounded repository files, manifests, scripts, candidate components,
+entry points, docs headings, CI, and basic Git metadata. It does not write nodes,
+read arbitrary source bodies, or call a model. The onboarding and repair agents
+use the scan to choose targeted reads; meaning and claims remain
+agent-assisted.
+
 ## Core module boundary
 
 The `MemoryStore` owns persistence, retrieval, write validation, deduplication,

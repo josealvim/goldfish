@@ -26,11 +26,15 @@ Use this workflow when a project has just adopted goldfish, when
 
 ## 0. Detect
 
-Call `memory_status`, then call `memory_recall` with:
+Call `memory_status`, then `memory_scan`, then `memory_recall` with:
 
 ```text
 project overview architecture decisions conventions gotchas
 ```
+
+`memory_scan` is read-only. Use it to find manifests, candidate components,
+entry points, commands, docs headings, CI, and Git metadata before reading
+files.
 
 If an overview-like concept exists under a different ID, use `supersedes` to
 replace it with the fixed `concept/project-overview` node. Do not create a
@@ -38,8 +42,8 @@ second overview.
 
 ## 1. Bounded reconnaissance
 
-Read at most **12 files / 4,000 lines**. Prefer headings, manifests, and entry
-points over full-file reads.
+Read at most **12 files / 4,000 lines**. Use `memory_scan` to choose those files;
+prefer headings, manifests, and entry points over full-file reads.
 
 Read only what helps you answer:
 

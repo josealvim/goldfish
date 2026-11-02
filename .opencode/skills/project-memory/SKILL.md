@@ -12,9 +12,11 @@ it to reduce exploratory file reads, not to replace verification reads.
 
 ## New project or empty memory
 
-Call `memory_status` before a large planning task. If onboarding is `empty` or
-`recommended`, suggest `/goldfish-onboard`. If it is `partial`, suggest filling
-the missing categories. Do not run a full onboarding pass unless the user asks.
+Call `memory_status` before a large planning task. For a new or unfamiliar
+project, call `memory_scan` to map manifests, entry points, docs, and candidate
+components without writing memory. If onboarding is `empty` or `recommended`,
+suggest `/goldfish-onboard`. If it is `partial`, suggest filling the missing
+categories. Do not run a full onboarding pass unless the user asks.
 
 ## Maintenance
 

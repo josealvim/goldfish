@@ -43,7 +43,7 @@ No npm publish is required. The package is installed directly from Git.
 opencode plugin add github:josealvim/goldfish
 
 # Pin a release tag
-opencode plugin add github:josealvim/goldfish#v0.9.0
+opencode plugin add github:josealvim/goldfish#v0.10.0
 ```
 
 Or clone the repository and run the installer:
@@ -116,6 +116,7 @@ npm run memory -- recall "how does injection work?"
 | `memory_get` | Read a node in full, including citations, relationships, and version history. |
 | `memory_neighbors` | Walk the knowledge graph one or two hops. |
 | `memory_status` | Show memory coverage and whether onboarding is recommended. |
+| `memory_scan` | Read-only structural scan: layout, manifests, scripts, candidate components, entry points, docs headings, CI, and Git metadata. |
 | `memory_list` | List nodes by kind, status, basis, scope, or tag, with citation and edge counts. |
 | `memory_health` | Show uncited, stale, disputed, orphaned, low-confidence, backlog, ratification, and renamed-ID diagnostics. |
 | `memory_verify` | Verify inferred/derived claims against bounded current-source windows with deterministic checks plus an optional semantic verifier. Never promotes to `verified`; may suggest ratification. |
@@ -160,6 +161,7 @@ or scope it:
 The onboarding workflow:
 
 - checks `memory_status` and existing memory first
+- calls `memory_scan` to map the repository without writing memory
 - reads at most 12 files / 4,000 lines
 - writes 10–15 cited nodes: one overview, 3–5 components, 3–5
   decisions/patterns, and 3–5 gotchas/runbooks
@@ -170,6 +172,22 @@ The onboarding workflow:
 
 If memory is empty and you did not ask to onboard, the model should suggest
 `/goldfish-onboard` rather than writing unsolicited claims.
+
+## Project scan
+
+`memory_scan` is a read-only structural scan. It reports:
+
+- bounded file counts, extensions, and sample paths
+- package manifests, workspaces, scripts, and candidate components
+- entry points
+- docs headings
+- CI config
+- Git branch, HEAD, dirty state, recent commits, and tags
+- skipped sensitive/generated paths
+
+It does not read arbitrary source bodies, write memory, or call a model. Use it
+before onboarding, repair, or targeted reads. `/goldfish-scan [scope]` exposes
+the same scan.
 
 ## Maintenance
 
@@ -230,6 +248,7 @@ are not re-proposed until a claim changes. Confirm or dismiss with
 The plugin also registers the corresponding commands:
 
 ```text
+/goldfish-scan [scope]       map the repository without writing memory
 /goldfish-review [scope]     show the review queue
 /goldfish-verify [target]    verify up to 5 claims
 /goldfish-audit [target]     sample and audit eligible claims
@@ -564,8 +583,9 @@ The core has no OpenCode imports. The plugin is an adapter over the same
   all-pairs scan.
 - Source snapshots cover file citations only. URLs, issues, PRs, and commits
   still rely on their recorded excerpt unless another adapter is added.
-- Structural adapters for the repository map, docs, Git/PR metadata, and session
-  metadata are not implemented. Seed via JSONL or let agents write claims.
+- `memory_scan` is a read-only structural scan. Automatic structural node
+  ingestion, PR metadata, and session metadata adapters are not implemented.
+  Seed via JSONL or let agents write claims.
 - Import merges the current node state and preserves citations and edges, but it
   does not replay historical versions or carry audit/conflict-proposal review
   state.
@@ -579,7 +599,7 @@ npm test
 npm run seed
 ```
 
-The 77 tests cover policy and glob matching, recall filters and budgets,
+The 81 tests cover policy and glob matching, recall filters and budgets,
 material revisions and supersession, multi-conflict forks, bounded source
 snapshots and redaction, citation freshness, derived cycles and premise
 soundness, verifier verdicts and caching, conflict candidate retrieval,

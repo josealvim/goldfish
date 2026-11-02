@@ -11,6 +11,7 @@ import {
   runSupportEval,
 } from "../core/eval.ts";
 import { buildRepairPacket, formatRepairPacket } from "../core/repair.ts";
+import { formatProjectScan, scanProject } from "../core/scan.ts";
 import {
   formatAuditCandidates,
   formatMemoryHealth,
@@ -175,6 +176,12 @@ interface EvalInput {
 
 interface RepairInput {
   id: string;
+}
+
+interface ScanInput {
+  scope?: string;
+  maxFiles?: number;
+  includeGit?: boolean;
 }
 
 const BUNDLED_EVAL_DIR = fileURLToPath(new URL("../../evals", import.meta.url));
@@ -488,6 +495,19 @@ const repairSchema = {
   additionalProperties: false,
 } as const;
 
+const scanSchema = {
+  type: "object",
+  properties: {
+    scope: {
+      type: "string",
+      description: "Repo-relative path or glob to scan; root manifests/docs remain included.",
+    },
+    maxFiles: { type: "integer", minimum: 1, maximum: 50_000 },
+    includeGit: { type: "boolean" },
+  },
+  additionalProperties: false,
+} as const;
+
 const auditSchema = {
   type: "object",
   properties: {
@@ -696,6 +716,35 @@ export async function registerTools(ctx: PluginContext, runtime: Runtime): Promi
         return {
           content: formatMemoryStatus(status),
           metadata: status,
+        };
+      },
+    });
+
+    editor.add({
+      name: "scan",
+      description:
+        "Read-only structural scan of the project: layout, manifests, scripts, candidate components, " +
+        "entry points, docs headings, CI, and Git metadata. Use before onboarding, repair, or targeted reads. " +
+        "Does not write memory or call a model.",
+      input: scanSchema,
+      options: { namespace: "memory", codemode: false },
+      execute: async (raw) => {
+        const input = (raw ?? {}) as ScanInput;
+        const scan = scanProject(runtime.projectRoot, {
+          scope: input.scope,
+          maxFiles: input.maxFiles,
+          includeGit: input.includeGit,
+        });
+        return {
+          content: formatProjectScan(scan),
+          metadata: {
+            files: scan.files.total,
+            truncated: scan.files.truncated,
+            packages: scan.packages.length,
+            components: scan.components.length,
+            docs: scan.docs.length,
+            git: Boolean(scan.git),
+          },
         };
       },
     });

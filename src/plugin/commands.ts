@@ -13,12 +13,28 @@ export async function registerCommands(ctx: PluginContext): Promise<Registration
             "Onboard to this project using goldfish.",
             scope ? `Scope: ${scope}` : "Scope: whole project.",
             "Follow the goldfish-onboarding skill.",
-            "Start with memory_status and memory_recall. Read at most 12 files / 4,000 lines.",
+            "Start with memory_status, memory_scan, and memory_recall. Read at most 12 files / 4,000 lines.",
             "Create at most 10–15 new cited nodes: one concept/project-overview, 3–5 components, 3–5 decisions/patterns, and 3–5 gotchas/runbooks.",
             "Use the exact title 'Project overview' for concept/project-overview and leave its scope empty.",
             "Write cited claims immediately. Do not use verified without a human, test, or commit.",
             "Ask before exceeding the first-pass budget.",
             "Finish with an onboarding report and memory_status.",
+          ].join("\n");
+          await ctx.session.prompt({ ...prompt, sessionID, text, delivery });
+        },
+      });
+
+      editor.add({
+        name: "goldfish-scan",
+        description: "Read-only structural scan of the project for onboarding, repair, or targeted reads.",
+        execute: async ({ sessionID, prompt, delivery }) => {
+          const scope = prompt.text.trim().replace(/\s+/g, " ").slice(0, 200);
+          const text = [
+            "Run a structural goldfish scan.",
+            scope ? `Scope: ${scope}` : "Scope: whole project.",
+            "Call memory_scan. It is read-only and does not call a model.",
+            "Summarize the layout, packages, candidate components, entry points, commands, docs, CI, and Git metadata.",
+            "Use the scan to choose targeted files to read. Do not write memory unless the user asks to onboard or remember.",
           ].join("\n");
           await ctx.session.prompt({ ...prompt, sessionID, text, delivery });
         },
