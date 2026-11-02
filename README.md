@@ -32,7 +32,7 @@ No npm publish is required. The package is installed directly from Git.
 opencode plugin add github:josealvim/goldfish
 
 # Pin a release tag
-opencode plugin add github:josealvim/goldfish#v0.1.1
+opencode plugin add github:josealvim/goldfish#v0.1.2
 ```
 
 Or clone the repository and run the installer:

@@ -33,7 +33,7 @@ export function projectKey(projectRoot: string): string {
 }
 
 export function defaultDbPath(projectRoot: string): string {
-  return process.env.GOLDFISH_DB ?? process.env.MONKEY_MEMORY_DB ?? path.join(dataRoot(), "projects", projectKey(projectRoot), "memory.sqlite");
+  return process.env.GOLDFISH_DB ?? path.join(dataRoot(), "projects", projectKey(projectRoot), "memory.sqlite");
 }
 
 export function ensureParent(target: string): void {

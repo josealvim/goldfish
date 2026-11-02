@@ -5,11 +5,11 @@ set -euo pipefail
 #
 # Usage:
 #   ./install.sh
-#   ./install.sh github:josealvim/goldfish#v0.1.1
+#   ./install.sh github:josealvim/goldfish#v0.1.2
 #   GOLDFISH_SPEC=github:josealvim/goldfish ./install.sh
 
-SPEC="${1:-${GOLDFISH_SPEC:-${MONKEY_MEMORY_SPEC:-github:josealvim/goldfish}}}"
-DEST="${GOLDFISH_DIR:-${MONKEY_MEMORY_DIR:-${HOME}/.config/opencode/plugins/goldfish}}"
+SPEC="${1:-${GOLDFISH_SPEC:-github:josealvim/goldfish}}"
+DEST="${GOLDFISH_DIR:-${HOME}/.config/opencode/plugins/goldfish}"
 
 if ! command -v opencode >/dev/null 2>&1; then
   echo "error: opencode is not on PATH" >&2
@@ -31,7 +31,7 @@ if ! command -v git >/dev/null 2>&1; then
   exit 1
 fi
 
-REPO="${GOLDFISH_REPO:-${MONKEY_MEMORY_REPO:-https://github.com/josealvim/goldfish.git}}"
+REPO="${GOLDFISH_REPO:-https://github.com/josealvim/goldfish.git}"
 if [ -d "${DEST}/.git" ]; then
   git -C "${DEST}" pull --ff-only
 else
