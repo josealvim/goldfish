@@ -250,7 +250,14 @@ async function main(): Promise<void> {
 
     case "review": {
       await withStore(args, (store) => {
-        console.log(formatReview(store.review()));
+        console.log(
+          formatReview(
+            store.review(),
+            store
+              .conflictProposals({ status: "proposed" })
+              .filter((proposal) => !proposal.stale),
+          ),
+        );
       });
       return;
     }

@@ -32,6 +32,7 @@ function makeFake(options: {
   withInstructions?: boolean;
   requireWritePermission?: boolean;
   verificationResponse?: string;
+  conflictResponse?: string | ((prompt: string) => string);
 }): Fake {
   const tools = new Map<string, any>();
   const promptHooks: Fake["promptHooks"] = [];
@@ -53,6 +54,11 @@ function makeFake(options: {
       reason: "The cited source supports the claim.",
       evidence: [],
       premises: [],
+      conflicts: [],
+    });
+  const conflictResponse =
+    options.conflictResponse ??
+    JSON.stringify({
       conflicts: [],
     });
   const registration = {
@@ -128,7 +134,13 @@ function makeFake(options: {
     generate: {
       text: async (input: unknown) => {
         generated.push(input);
-        return { text: verificationResponse };
+        const prompt = String((input as { prompt?: string })?.prompt ?? "");
+        const text = prompt.includes("conflict analyst")
+          ? typeof conflictResponse === "function"
+            ? conflictResponse(prompt)
+            : conflictResponse
+          : verificationResponse;
+        return { text };
       },
     },
   } as unknown as PluginContext;
@@ -157,6 +169,7 @@ async function withPlugin(
     withInstructions?: boolean;
     requireWritePermission?: boolean;
     verificationResponse?: string;
+    conflictResponse?: string | ((prompt: string) => string);
   } = {},
 ): Promise<void> {
   const root = mkdtempSync(path.join(tmpdir(), "goldfish-plugin-"));
@@ -201,6 +214,8 @@ test("registers agent tools and executes recall/get", async () => {
       "archive",
       "audit",
       "cite",
+      "conflict",
+      "conflicts",
       "get",
       "health",
       "link",
@@ -294,6 +309,91 @@ test("memory_audit samples, runs, respects the cooldown, and records outcomes", 
     assert.match(String(recorded.content), /Recorded stale audit/);
     assert.equal(runtime.store.get(created.node!.id)!.node.status, "stale");
   });
+});
+
+test("memory_conflicts proposes a conflict and memory_admin.conflict confirms it", async () => {
+  await withPlugin(
+    async (fake, runtime) => {
+      const target = runtime.store.remember(
+        {
+          kind: "decision",
+          title: "Conflict policy alpha",
+          body: "Billing publishes through an outbox.",
+          tags: ["billing"],
+          citations: [{ type: "file", locator: "docs/decisions.md" }],
+        },
+        { author: { type: "system", id: "test" } },
+      ).node!;
+      const candidate = runtime.store.remember(
+        {
+          kind: "decision",
+          title: "Conflict policy beta",
+          body: "Billing publishes directly to the provider.",
+          tags: ["billing"],
+          citations: [{ type: "file", locator: "docs/decisions.md" }],
+        },
+        { author: { type: "system", id: "test" } },
+      ).node!;
+      await registerTools(fake.ctx, runtime);
+
+      const conflicts = fake.tools.get("conflicts")!;
+      const discovered = await conflicts.execute(
+        { ids: [target.id], candidatesPerClaim: 3 },
+        toolContext,
+      );
+      assert.match(String(discovered.content), /1 proposed conflict/);
+      const proposal = runtime.store.getConflictProposal(target.id, candidate.id)!;
+      assert.equal(proposal.status, "proposed");
+      assert.equal(runtime.store.get(target.id)!.node.status, "active");
+      assert.equal(runtime.store.get(candidate.id)!.node.status, "active");
+
+      const repeat = await conflicts.execute(
+        { ids: [target.id], candidatesPerClaim: 3 },
+        toolContext,
+      );
+      assert.match(String(repeat.content), /0 candidate\(s\)/);
+      assert.equal(fake.generated.length, 1);
+
+      const review = fake.tools.get("review")!;
+      const reviewed = await review.execute({}, toolContext);
+      assert.match(String(reviewed.content), /Proposed conflicts/);
+      assert.match(String(reviewed.content), /memory_admin\.conflict/);
+
+      const admin = fake.tools.get("conflict")!;
+      const confirmed = await admin.execute(
+        {
+          action: "confirm",
+          from: target.id,
+          to: candidate.id,
+          reason: "The sources cannot both be true.",
+        },
+        toolContext,
+      );
+      assert.match(String(confirmed.content), /both claims are disputed/);
+      assert.equal(runtime.store.get(target.id)!.node.status, "disputed");
+      assert.equal(runtime.store.get(candidate.id)!.node.status, "disputed");
+      assert.equal(
+        runtime.store.getConflictProposal(target.id, candidate.id)!.status,
+        "confirmed",
+      );
+      assert.equal(fake.permissions.length, 1);
+    },
+    {
+      conflictResponse: JSON.stringify({
+        conflicts: [
+          {
+            id: "decision/conflict-policy-beta",
+            relation: "contradicts",
+            confidence: 0.91,
+            reason: "One claim uses an outbox; the other publishes directly.",
+            evidence: [
+              { locator: "file:docs/decisions.md", quote: "Injection policy." },
+            ],
+          },
+        ],
+      }),
+    },
+  );
 });
 
 test("memory_status reports onboarding progress through empty, recommended, partial, and complete", async () => {
@@ -612,6 +712,7 @@ test("registerSkills registers the daily, onboarding, and verification skills", 
     const verification = byID.get("goldfish-verification");
     assert.equal(verification?.autoinvoke, true);
     assert.match(verification?.content ?? "", /memory_verify/);
+    assert.match(verification?.content ?? "", /memory_conflicts/);
     assert.match(verification?.content ?? "", /must not set .*verified/i);
   });
 });
@@ -621,7 +722,13 @@ test("the onboarding command injects a scoped onboarding prompt", async () => {
     await registerCommands(fake.ctx);
     assert.deepEqual(
       fake.commands.map((command) => command.name),
-      ["goldfish-onboard", "goldfish-verify", "goldfish-audit", "goldfish-review"],
+      [
+        "goldfish-onboard",
+        "goldfish-verify",
+        "goldfish-audit",
+        "goldfish-conflicts",
+        "goldfish-review",
+      ],
     );
     const command = fake.commands[0];
     await command.execute({
@@ -661,9 +768,17 @@ test("the onboarding command injects a scoped onboarding prompt", async () => {
 
     await fake.commands[3].execute({
       sessionID: "ses_test",
+      prompt: { text: "decision/example" },
+      delivery: "steer",
+    });
+    assert.match(String(fake.prompts[4].text), /memory_conflicts/);
+    assert.match(String(fake.prompts[4].text), /decision\/example/);
+
+    await fake.commands[4].execute({
+      sessionID: "ses_test",
       prompt: { text: "" },
       delivery: "steer",
     });
-    assert.match(String(fake.prompts[4].text), /memory_review/);
+    assert.match(String(fake.prompts[5].text), /memory_review/);
   });
 });

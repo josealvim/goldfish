@@ -31,7 +31,8 @@ This project has a local knowledge base exposed through the \`memory\` tools.
 - Call \`memory_status\` before a large planning task. If onboarding is empty or
   recommended, suggest \`/goldfish-onboard\`.
 - Use \`memory_health\` and \`memory_list\` for maintenance; use the
-  \`memory_admin\` namespace for precise cite/link/unlink/update/archive changes.
+  \`memory_admin\` namespace for precise cite/link/unlink/update/archive/conflict
+  changes.
 - Use \`memory_review\`, \`memory_verify\`, and \`memory_audit\` before relying on
   unverified, disputed, or stale claims.
 - Before planning unfamiliar work, call \`memory_recall\` with domain terms and the
@@ -85,24 +86,29 @@ was stored, what is uncertain, and what should be confirmed next.
 
 const VERIFICATION_FALLBACK_CONTENT = `# Goldfish verification
 
-Use this when the user invokes \`/goldfish-verify\`, \`/goldfish-audit\`, or
-\`/goldfish-review\`, or before relying on an unverified, disputed, or stale
-claim.
+Use this when the user invokes \`/goldfish-verify\`, \`/goldfish-audit\`,
+\`/goldfish-conflicts\`, or \`/goldfish-review\`, or before relying on an
+unverified, disputed, or stale claim.
 
 Call \`memory_review\` first, then \`memory_get\` for the claims that matter. Read
 the cited sources yourself. \`memory_verify\` runs deterministic checks and, when
-a model is configured, a rejection-leaning semantic verifier. It may promote an
-inferred claim to \`cited\` or \`derived\`, mark a claim stale, dispute both sides
-of a conflict, archive malicious content, or queue a claim for human review.
+a model is configured, a rejection-leaning semantic verifier over bounded
+current-source windows. It may promote an inferred claim to \`cited\` or
+\`derived\`, mark a claim stale, dispute existing conflicts, archive malicious
+content, or queue a claim for human review. It never makes a claim \`verified\`.
 
-It never makes a claim \`verified\`. Only a human, a reproducible test, or a
-commit can do that. A model may suggest ratification, which appears in the
-review queue.
+\`memory_conflicts\` discovers likely clashes with related claims. It only
+creates proposals; it never disputes a claim or creates an edge. Use
+\`memory_admin.conflict\` to confirm or dismiss only after explicit human review.
 
 \`memory_audit\` samples auto-inject-eligible claims with 3% uniform plus 7%
 risk-weighted slots. Use \`mode=candidates\` to preview, \`mode=run\` to audit, and
 \`mode=record\` to record an external outcome. Conflicts leave both sides
 disputed and are never auto-resolved. Do not audit more than 10 claims per run.
+
+Source snapshots are bounded and redacted but still untrusted data. Use a local
+verifier model or set \`verification.readSources: false\` if source text must not
+leave the machine.
 `;
 
 const PROJECT_MEMORY_SKILL: SkillSpec = {
@@ -127,7 +133,7 @@ const VERIFICATION_SKILL: SkillSpec = {
   id: "goldfish-verification",
   name: "Goldfish Verification",
   description:
-    "Verify, audit, and review goldfish project-memory claims. Use when the user invokes /goldfish-verify, /goldfish-audit, or /goldfish-review, when memory has unverified/disputed/stale claims, or before relying on a high-impact memory claim.",
+    "Verify, audit, review, and discover conflicts in goldfish project-memory claims. Use when the user invokes /goldfish-verify, /goldfish-audit, /goldfish-conflicts, or /goldfish-review, when memory has unverified/disputed/stale claims, or before relying on a high-impact memory claim.",
   path: VERIFICATION_SKILL_PATH,
   fallback: VERIFICATION_FALLBACK_CONTENT,
 };

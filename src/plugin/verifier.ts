@@ -1,4 +1,10 @@
 import {
+  buildConflictPrompt,
+  parseConflictVerdict,
+  type ConflictVerdict,
+  type ConflictVerifier,
+} from "../core/conflicts.ts";
+import {
   buildVerificationPrompt,
   parseVerificationVerdict,
   type VerificationPacket,
@@ -30,7 +36,7 @@ export class ModelVerifier implements Verifier {
   constructor(
     private readonly ctx: PluginContext,
     private readonly model?: string,
-    private readonly maxChars = 13_000,
+    private readonly maxChars = 40_000,
   ) {}
 
   async verify(packet: VerificationPacket): Promise<VerificationVerdict> {
@@ -52,6 +58,38 @@ export class ModelVerifier implements Verifier {
         premises: [],
         conflicts: [],
         cacheable: false,
+      };
+    }
+  }
+}
+
+export class ModelConflictVerifier implements ConflictVerifier {
+  constructor(
+    private readonly ctx: PluginContext,
+    private readonly model?: string,
+    private readonly maxChars = 44_000,
+  ) {}
+
+  async find(
+    target: VerificationPacket,
+    candidates: VerificationPacket[],
+  ): Promise<ConflictVerdict> {
+    try {
+      const prompt = buildConflictPrompt(target, candidates).slice(0, this.maxChars);
+      const model = parseModelRef(this.model);
+      const result = await this.ctx.generate.text({
+        prompt,
+        ...(model ? { model } : {}),
+      });
+      return parseConflictVerdict(
+        result.text,
+        new Set(candidates.map((candidate) => candidate.node.id)),
+      );
+    } catch (error) {
+      return {
+        findings: [],
+        cacheable: false,
+        error: `Conflict verifier error: ${error instanceof Error ? error.message : String(error)}`,
       };
     }
   }

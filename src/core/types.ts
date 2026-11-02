@@ -13,6 +13,20 @@ export const NODE_KINDS = [
 
 export type NodeKind = (typeof NODE_KINDS)[number];
 
+export const CLAIM_KINDS = [
+  "fact",
+  "decision",
+  "pattern",
+  "gotcha",
+  "runbook",
+] as const;
+
+export type ClaimKind = (typeof CLAIM_KINDS)[number];
+
+export function isClaimKind(kind: NodeKind): kind is ClaimKind {
+  return (CLAIM_KINDS as readonly string[]).includes(kind);
+}
+
 export const EDGE_TYPES = [
   "cites",
   "derived_from",
@@ -79,10 +93,24 @@ export interface Citation extends CitationInput {
   validation: "ok" | "missing" | "unchecked";
 }
 
+export interface CitationSnapshot {
+  locator: string;
+  content: string;
+  contentHash: string;
+  lineStart: number;
+  lineEnd: number;
+  truncated: boolean;
+  excerptFound: boolean;
+  redacted: boolean;
+  promptInjectionDetected: boolean;
+  skipReason?: string;
+}
+
 export interface CitationCheck {
   nodeID: string;
   citation: Citation;
   status: "ok" | "missing" | "changed" | "unchecked";
+  snapshot?: CitationSnapshot;
 }
 
 export interface MemoryNode {
@@ -382,6 +410,51 @@ export interface ReviewItem {
   reasons: string[];
 }
 
+export type ConflictRelation = "contradicts";
+export type ConflictStatus = "proposed" | "confirmed" | "dismissed" | "stale";
+
+export interface ConflictEvidence {
+  locator: string;
+  quote: string;
+}
+
+export interface ConflictFinding {
+  candidateID: string;
+  relation: ConflictRelation;
+  confidence: number;
+  reason: string;
+  evidence: ConflictEvidence[];
+}
+
+export interface ConflictProposal {
+  id: number;
+  nodeA: MemoryNode;
+  nodeB: MemoryNode;
+  nodeAVersion: number;
+  nodeBVersion: number;
+  status: ConflictStatus;
+  relation: ConflictRelation;
+  confidence: number;
+  reason: string;
+  evidence: ConflictEvidence[];
+  inputHash: string;
+  createdAt: string;
+  updatedAt: string;
+  stale: boolean;
+}
+
+export interface ConflictProposalInput {
+  nodeA: string;
+  nodeB: string;
+  nodeAVersion: number;
+  nodeBVersion: number;
+  relation: ConflictRelation;
+  confidence: number;
+  reason: string;
+  evidence: ConflictEvidence[];
+  inputHash: string;
+}
+
 export interface AuditCandidate {
   node: MemoryNode;
   trigger: "uniform" | "risk";
@@ -402,7 +475,9 @@ export interface AuditRecordInput {
     | "malicious"
     | "confirmed"
     | "rejected"
-    | "needs_human";
+    | "needs_human"
+    | "no_conflict"
+    | "conflict_proposed";
   auditor?: Record<string, unknown>;
   findings?: Record<string, unknown>;
   sampledBy?: string;

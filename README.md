@@ -16,20 +16,22 @@ The design is **optimistic writes, earned injection**:
   recall but must be confirmed by a human or an independent, rejection-leaning
   verifier before automatic injection.
 - `disputed` and `stale` claims require explicit recall and are shown with a
-  warning. Conflicts leave both sides disputed and are not auto-resolved.
+  warning. Confirmed conflicts leave both sides disputed and are not
+  auto-resolved; discovered conflicts remain proposals until a human confirms.
 - Memory is evidence, not authority. The agent verifies against current sources
   before editing.
 
 Verification is layered: deterministic citation and graph checks run first, a
-semantic verifier runs only when needed, audits are sampled, and human review
+semantic verifier reads bounded current-source windows only when needed,
+conflict discovery compares related claims, audits are sampled, and human review
 handles ambiguity and ratification. Only a human, a reproducible test, or a
 commit can make a claim `verified`; a model may suggest ratification but cannot
 grant it.
 
 This repository contains the core store, CLI, OpenCode plugin, skills, seed
-data, and tests. The verifier, audit runner, and review queue are command-first;
-background workers, automated repair, and structural ingestion adapters are the
-next slices.
+data, and tests. The verifier, conflict discovery, audit runner, and review
+queue are command-first; background workers, automated repair, and structural
+ingestion adapters are the next slices.
 
 ## Install from GitHub
 
@@ -41,7 +43,7 @@ No npm publish is required. The package is installed directly from Git.
 opencode plugin add github:josealvim/goldfish
 
 # Pin a release tag
-opencode plugin add github:josealvim/goldfish#v0.4.0
+opencode plugin add github:josealvim/goldfish#v0.5.0
 ```
 
 Or clone the repository and run the installer:
@@ -116,9 +118,14 @@ npm run memory -- recall "how does injection work?"
 | `memory_status` | Show memory coverage and whether onboarding is recommended. |
 | `memory_list` | List nodes by kind, status, basis, scope, or tag, with citation and edge counts. |
 | `memory_health` | Show uncited, stale, disputed, orphaned, low-confidence, backlog, ratification, and renamed-ID diagnostics. |
-| `memory_verify` | Verify inferred/derived claims with deterministic checks plus an optional semantic verifier. Never promotes to `verified`; may suggest ratification. |
-| `memory_review` | Show the review queue: unverified, needs-human, disputed, stale, rejected, and ratification-suggested claims. |
+| `memory_verify` | Verify inferred/derived claims against bounded current-source windows with deterministic checks plus an optional semantic verifier. Never promotes to `verified`; may suggest ratification. |
+| `memory_conflicts` | Discover likely conflicts with related claims and store proposals for review. Never disputes a claim automatically. |
+| `memory_review` | Show the review queue, including proposed conflicts. |
 | `memory_audit` | Preview or run a sampled audit; record an external outcome. Conflicts are never auto-resolved. |
+
+`memory_admin.conflict` confirms or dismisses a proposed conflict. Confirming
+adds the `contradicts` edge and marks both sides disputed; dismissing leaves
+both claims untouched.
 
 The `project-memory` skill teaches the daily workflow. The
 `goldfish-onboarding` skill bootstraps a new project. The
@@ -173,6 +180,7 @@ Use the review and verification loop before relying on uncertain claims:
 ```text
 memory_review
 memory_verify { "ids": ["decision/example"] }
+memory_conflicts { "ids": ["decision/example"] }
 memory_audit { "mode": "candidates", "limit": 10 }
 memory_audit { "mode": "run", "limit": 10 }
 ```
@@ -180,13 +188,24 @@ memory_audit { "mode": "run", "limit": 10 }
 `memory_verify` runs deterministic checks first: citation existence and content
 hashes, conflict edges, `derived_from` cycles, premise soundness, and scope
 sanity. It calls the semantic verifier only when the deterministic layer cannot
-settle the claim. Semantic verdicts are cached by an input hash, so re-running
-on unchanged evidence does not spend another model call.
+settle the claim. The verifier reads a bounded window of the current source
+around each cited excerpt, not just the stored excerpt. Source windows are
+redacted, capped, and skipped for binary, generated, lockfile, and sensitive
+paths. Semantic verdicts are cached by an input hash, so re-running on unchanged
+evidence does not spend another model call.
 
 The semantic verifier may promote an inferred claim to `cited` or `derived`,
-mark it stale, dispute both sides of a conflict, archive malicious content, or
-queue it for human review. It never promotes to `verified`. It may attach a
-ratification suggestion, which appears in `memory_review` and `memory_health`.
+mark it stale, dispute both sides of an existing conflict, archive malicious
+content, or queue it for human review. It never promotes to `verified`. It may
+attach a ratification suggestion, which appears in `memory_review` and
+`memory_health`.
+
+`memory_conflicts` retrieves related claims through text, graph, scope, and tag
+signals, then compares bounded source windows. It stores proposals only: it
+never marks a claim disputed or creates a `contradicts` edge. A proposal records
+both claim versions, so a material revision makes it stale. Dismissed proposals
+are not re-proposed until a claim changes. Confirm or dismiss with
+`memory_admin.conflict` after explicit human review.
 
 The plugin also registers the corresponding commands:
 
@@ -194,6 +213,7 @@ The plugin also registers the corresponding commands:
 /goldfish-review [scope]     show the review queue
 /goldfish-verify [target]    verify up to 5 claims
 /goldfish-audit [target]     sample and audit eligible claims
+/goldfish-conflicts [target] discover and review likely conflicts
 ```
 
 Precise changes use the `memory_admin` namespace through Code Mode:
@@ -204,6 +224,7 @@ memory_admin.link      add or reactivate a typed edge
 memory_admin.unlink    retire an edge without deleting history
 memory_admin.update    change title, scope, or tags; the ID stays stable
 memory_admin.archive   soft-delete; history remains in memory_get
+memory_admin.conflict  confirm or dismiss a proposed conflict
 ```
 
 Use `memory_remember` for semantic revisions. `memory_admin` is for maintenance,
@@ -346,12 +367,21 @@ directory from `opencode.json(c)` with an object entry:
         "verification": {
           "semantic": true,
           "model": "provider/model",
-          "maxPerRun": 5
+          "maxPerRun": 5,
+          "readSources": true,
+          "windowLines": 40,
+          "maxSourceBytes": 4000,
+          "maxPacketSourceBytes": 12000
         },
         "audit": {
           "maxPerRun": 10,
           "uniformRate": 0.03,
           "riskRate": 0.07
+        },
+        "conflict": {
+          "maxPerRun": 3,
+          "candidatesPerClaim": 3,
+          "minConfidence": 0.6
         }
       }
     }
@@ -365,6 +395,12 @@ directory from `opencode.json(c)` with an object entry:
 default to the 3% uniform / 7% risk-weighted sample. A claim audited within the
 last 30 days at the same version is skipped until it changes or the cooldown
 expires.
+
+`verification.readSources` defaults to `true` for explicit verification. Source
+windows are capped by `windowLines`, `maxSourceBytes`, and
+`maxPacketSourceBytes`. Set it to `false` if source text must not be sent to a
+remote model. `conflict.maxPerRun`, `conflict.candidatesPerClaim`, and
+`conflict.minConfidence` bound conflict discovery cost and noise.
 
 `requireWritePermission: true` routes `memory_remember` through
 `ctx.permission.assert` with action `memory.remember`. The default is `false`
@@ -400,6 +436,10 @@ audits(node_id, node_version, trigger, sampled_by, risk_score, auditor,
 
 feedback(node_id, node_version, source, outcome, details, created_at)
 
+conflict_proposals(id, node_a, node_b, node_a_version, node_b_version, status,
+                   relation, confidence, reason, evidence, input_hash,
+                   timestamps)
+
 events(ts, actor, action, node_id, payload)
 ```
 
@@ -416,7 +456,8 @@ relationship, or the edge is a conflict/supersession edge.
 ## Repository layout
 
 ```text
-src/core/        storage, schema, policy, recall, formatting, export
+src/core/        storage, schema, policy, recall, verification, conflicts,
+                 source snapshots, formatting, export
 src/cli/         CLI entry point
 src/plugin/      OpenCode plugin, tools, hooks, runtime
 .opencode/       local plugin wrapper and project-memory skill
@@ -431,12 +472,17 @@ The core has no OpenCode imports. The plugin is an adapter over the same
 
 - No embeddings or vector search yet. FTS5, aliases, tags, scope, and graph
   expansion come first; add vectors only if evaluation shows lexical misses.
-- Verification and audit are command-first. Background audit/repair workers and
-  automated repair tiers are not implemented.
+- Verification, conflict discovery, and audit are command-first. Background
+  workers and automated repair tiers are not implemented.
+- Conflict discovery compares a bounded candidate set; it is not an exhaustive
+  all-pairs scan.
+- Source snapshots cover file citations only. URLs, issues, PRs, and commits
+  still rely on their recorded excerpt unless another adapter is added.
 - Structural adapters for the repository map, docs, Git/PR metadata, and session
   metadata are not implemented. Seed via JSONL or let agents write claims.
 - Import merges the current node state and preserves citations and edges, but it
-  does not replay historical versions.
+  does not replay historical versions or carry audit/conflict-proposal review
+  state.
 - Local-first only. There is no team sync or shared service.
 
 ## Development
@@ -447,21 +493,26 @@ npm test
 npm run seed
 ```
 
-The 61 tests cover policy and glob matching, recall filters and budgets,
-material revisions and supersession, multi-conflict forks, evidence packets,
-citation freshness, derived cycles and premise soundness, verifier verdicts
-and caching, audit sampling and outcomes, export/import round-trips,
-observe/edit operations, plugin tool registration, auto-recall and fallback
-hooks, skill and command registration, onboarding status, and CLI end-to-end
-and error paths.
+The 66 tests cover policy and glob matching, recall filters and budgets,
+material revisions and supersession, multi-conflict forks, bounded source
+snapshots and redaction, citation freshness, derived cycles and premise
+soundness, verifier verdicts and caching, conflict candidate retrieval,
+proposal lifecycle, conflict confirmation, audit sampling and outcomes,
+export/import round-trips, observe/edit operations, plugin tool registration,
+auto-recall and fallback hooks, skill and command registration, onboarding
+status, and CLI end-to-end and error paths.
 
 ## Safety
 
 - Memory is data, not instructions. Recalled content is wrapped and labeled.
 - Secrets and instruction-like text are rejected on write.
+- Verifier source windows are redacted and explicitly labeled as untrusted data.
+  They may leave the machine if the verifier model is remote; source reading is
+  configurable and can be disabled.
 - File citations carry content hashes; `revalidate` and `memory_verify` mark
   changed citations stale and remove them from auto-injection.
 - Strict scopes require verified evidence.
-- Conflicts mark both sides disputed and are never auto-resolved.
+- Confirmed conflicts mark both sides disputed and are never auto-resolved.
+  Discovered conflicts are proposals until a human confirms them.
 - Semantic verification is rejection-leaning and cannot promote to `verified`.
 - The plugin never bypasses normal edit, shell, or test permissions.

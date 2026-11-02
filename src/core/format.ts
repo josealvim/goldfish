@@ -1,6 +1,7 @@
 import type {
   AuditCandidate,
   Citation,
+  ConflictProposal,
   MemoryCard,
   MemoryDetail,
   MemoryHealth,
@@ -154,15 +155,29 @@ export function formatNeighbors(result: NeighborResult): string {
   return lines.join("\n");
 }
 
-export function formatReview(items: ReviewItem[]): string {
-  if (!items.length) return "Memory review queue is empty.";
-  const lines = [`# Memory review queue (${items.length})`, ""];
-  for (const item of items) {
-    lines.push(
-      `- ${item.node.id}`,
-      `  [${item.node.kind} · ${item.node.basis} · ${item.node.status}] ${item.node.title}`,
-      `  Reasons: ${item.reasons.join("; ")}`,
-    );
+export function formatReview(items: ReviewItem[], conflicts: ConflictProposal[] = []): string {
+  if (!items.length && !conflicts.length) return "Memory review queue is empty.";
+  const lines: string[] = [];
+  if (items.length) {
+    lines.push(`# Memory review queue (${items.length})`, "");
+    for (const item of items) {
+      lines.push(
+        `- ${item.node.id}`,
+        `  [${item.node.kind} · ${item.node.basis} · ${item.node.status}] ${item.node.title}`,
+        `  Reasons: ${item.reasons.join("; ")}`,
+      );
+    }
+  }
+  if (conflicts.length) {
+    if (lines.length) lines.push("");
+    lines.push(`# Proposed conflicts (${conflicts.length})`, "");
+    for (const proposal of conflicts) {
+      lines.push(
+        `- ${proposal.nodeA.id} ↔ ${proposal.nodeB.id}`,
+        `  [${proposal.relation} · ${proposal.confidence.toFixed(2)}] ${proposal.reason}`,
+        `  Confirm with memory_admin.conflict action=confirm, or dismiss it.`,
+      );
+    }
   }
   return lines.join("\n");
 }

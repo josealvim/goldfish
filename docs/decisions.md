@@ -45,6 +45,14 @@ scope sanity. A semantic verifier runs only when deterministic checks pass but
 cannot decide support. The verifier defaults to reject, requires direct
 evidence, quotes the supporting text, and refuses circular citations.
 
+Semantic verification sends a bounded window of the current source, not just the
+excerpt stored at write time. Snapshots are anchored near the cited excerpt,
+capped per citation and per packet, and skipped for binary, generated, lockfile,
+or sensitive paths. Obvious secrets are redacted, and instruction-like text is
+flagged. Source windows are untrusted data. Because a remote verifier model
+would receive source text, reading is configurable and can be disabled for
+privacy; the defaults are explicit rather than hidden.
+
 A confirmed inferred claim is promoted to `cited` when a source supports it, or
 `derived` when its premises are sound. The verifier never promotes to
 `verified`; only a human, reproducible test, or commit evidence can do that. The
@@ -70,15 +78,31 @@ crowd out unaudited claims; a material revision resets the cooldown. Background
 audit and repair workers are deferred until the command-first loop has evidence
 that they are worth the cost and complexity.
 
+## Discover conflicts, but confirm them separately
+
+Conflict discovery retrieves related claims through text, graph, scope, and tag
+signals, then compares the target against a bounded candidate set using current
+source windows. The model may only return candidate IDs it was given. A
+discovery result is stored as a proposal, not as an edge or status change. It
+never marks either claim `disputed`, because a model-detected clash can be a
+false positive.
+
+Proposals deduplicate by a canonical pair and record both claim versions. A
+material revision makes the proposal stale. A dismissed proposal is not
+re-proposed until one claim version changes. Confirming a proposal adds the
+`contradicts` edge and marks both sides `disputed`; dismissing it leaves both
+claims untouched. This separates cheap discovery from high-consequence
+resolution.
+
 ## Conflicts leave both sides disputed
 
-A conflict is evidence that at least one claim is wrong, not a vote. When two
-claims conflict, both are marked `disputed`, both lose auto-injection, and the
-`contradicts` edge is preserved. The system does not auto-resolve the conflict,
-auto-delete a side, or silently choose the newer claim. A human resolves it by
-adding evidence, revising one side with `supersedes`, or archiving the wrong
-claim. This prevents a confident verifier or a newer write from erasing a real
-disagreement.
+A conflict is evidence that at least one claim is wrong, not a vote. Once a
+conflict is confirmed, both claims are marked `disputed`, both lose
+auto-injection, and the `contradicts` edge is preserved. The system does not
+auto-resolve the conflict, auto-delete a side, or silently choose the newer
+claim. A human resolves it by adding evidence, revising one side with
+`supersedes`, or archiving the wrong claim. This prevents a confident verifier
+or a newer write from erasing a real disagreement.
 
 ## Per-scope strict mode
 
@@ -109,10 +133,11 @@ map, then Git/PR, then opt-in session learnings.
 ## Core module boundary
 
 The `MemoryStore` owns persistence, retrieval, write validation, deduplication,
-conflict edges, audit records, injection logs, and export. It has no OpenCode
-imports, so the CLI, tests, and plugin all use the same core through a small
-interface. The plugin is a thin adapter: tools, hooks, permissions, and runtime
-paths live there; storage and recall policy live in the core.
+conflict edges and proposals, audit records, citation freshness and source
+snapshots, injection logs, and export. It has no OpenCode imports, so the CLI,
+tests, and plugin all use the same core through a small interface. The plugin is
+a thin adapter: tools, hooks, permissions, model calls, and runtime paths live
+there; storage and policy live in the core.
 
 ## SQLite runtime adapter
 

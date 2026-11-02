@@ -1,6 +1,6 @@
 import type { SqliteDatabase } from "./sqlite.ts";
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -124,6 +124,23 @@ CREATE TABLE IF NOT EXISTS feedback (
   created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS conflict_proposals (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  node_a TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+  node_b TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+  node_a_version INTEGER NOT NULL,
+  node_b_version INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'proposed',
+  relation TEXT NOT NULL DEFAULT 'contradicts',
+  confidence REAL NOT NULL DEFAULT 0,
+  reason TEXT NOT NULL DEFAULT '',
+  evidence_json TEXT NOT NULL DEFAULT '[]',
+  input_hash TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(node_a, node_b)
+);
+
 CREATE INDEX IF NOT EXISTS nodes_status_idx ON nodes(status);
 CREATE INDEX IF NOT EXISTS nodes_kind_idx ON nodes(kind);
 CREATE INDEX IF NOT EXISTS nodes_updated_idx ON nodes(updated_at);
@@ -134,6 +151,9 @@ CREATE INDEX IF NOT EXISTS sources_type_idx ON sources(type, locator);
 CREATE INDEX IF NOT EXISTS events_ts_idx ON events(ts);
 CREATE INDEX IF NOT EXISTS injections_session_idx ON injections(session_id);
 CREATE INDEX IF NOT EXISTS audits_node_idx ON audits(node_id);
+CREATE INDEX IF NOT EXISTS conflict_proposals_status_idx ON conflict_proposals(status);
+CREATE INDEX IF NOT EXISTS conflict_proposals_a_idx ON conflict_proposals(node_a);
+CREATE INDEX IF NOT EXISTS conflict_proposals_b_idx ON conflict_proposals(node_b);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts USING fts5(
   node_id UNINDEXED,
@@ -148,5 +168,8 @@ export function initSchema(db: SqliteDatabase): void {
   db.exec("PRAGMA foreign_keys = ON;");
   db.exec("PRAGMA journal_mode = WAL;");
   db.exec(SCHEMA_SQL);
-  db.prepare("INSERT OR IGNORE INTO schema_meta(key, value) VALUES(?, ?)").run("version", String(SCHEMA_VERSION));
+  db.prepare(
+    `INSERT INTO schema_meta(key, value) VALUES(?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+  ).run("version", String(SCHEMA_VERSION));
 }

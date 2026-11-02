@@ -10,6 +10,9 @@ import {
   type Citation,
   type CitationCheck,
   type CitationInput,
+  type ConflictProposal,
+  type ConflictProposalInput,
+  type ConflictStatus,
   type Edge,
   type EdgeType,
   type ExportBundle,
@@ -40,6 +43,7 @@ import {
   type SourceType,
   type VerificationState,
   type WriteContext,
+  isClaimKind,
 } from "./types.ts";
 import {
   baseNodeId,
@@ -58,6 +62,8 @@ import { DEFAULT_POLICY, effectiveAllowedBasis, isAutoInjectEligible, type Injec
 import { initSchema } from "./schema.ts";
 import { transaction, type SqliteDatabase, type SqlValue } from "./sqlite.ts";
 import { estimateTokens, formatCardText } from "./format.ts";
+import { buildCitationSnapshot, type SourceSnapshotOptions } from "./sources.ts";
+import { containsInstructionLikeText, containsSecret } from "./safety.ts";
 
 type Row = Record<string, unknown>;
 
@@ -945,6 +951,107 @@ export class MemoryStore {
     };
   }
 
+  relatedClaims(id: string, options: { limit?: number } = {}): MemoryNode[] {
+    const row = this.getRow(id);
+    if (!row) return [];
+    const target = this.rowToNode(row);
+    const limit = clamp(Math.floor(options.limit ?? 3), 1, 10);
+    const candidateLimit = Math.max(limit * 20, 80);
+    const ftsQuery = buildFtsQuery(`${target.title} ${target.body} ${target.tags.join(" ")}`);
+    const rows = ftsQuery
+      ? this.db
+          .prepare(
+            `SELECT n.*, bm25(nodes_fts) AS bm25
+             FROM nodes_fts
+             JOIN nodes n ON n.id = nodes_fts.node_id
+             WHERE nodes_fts MATCH ? AND n.status = 'active'
+             ORDER BY bm25
+             LIMIT ?`,
+          )
+          .all(ftsQuery, candidateLimit)
+      : this.db
+          .prepare(
+            "SELECT * FROM nodes WHERE status = 'active' ORDER BY updated_at DESC LIMIT ?",
+          )
+          .all(candidateLimit);
+
+    const existingConflicts = new Set(
+      this.getEdges(target.id)
+        .filter((edge) => edge.type === "contradicts")
+        .map((edge) => (edge.fromID === target.id ? edge.toID : edge.fromID)),
+    );
+    const ranked = new Map<string, { node: MemoryNode; score: number; reasons: string[] }>();
+    const consider = (node: MemoryNode, score: number, reason: string) => {
+      if (node.id === target.id || node.status !== "active" || !isClaimKind(node.kind)) return;
+      if (existingConflicts.has(node.id)) return;
+      if (target.scope.length && node.scope.length) {
+        const overlaps =
+          anyScopeMatches(target.scope, node.scope) ||
+          anyScopeMatches(node.scope, target.scope);
+        if (!overlaps) return;
+      }
+      const previous = ranked.get(node.id);
+      if (previous && previous.score >= score) {
+        previous.reasons.push(reason);
+        return;
+      }
+      ranked.set(node.id, {
+        node,
+        score,
+        reasons: previous ? [...previous.reasons, reason] : [reason],
+      });
+    };
+
+    const targetTags = new Set(target.tags);
+    rows.forEach((candidateRow, index) => {
+      const node = this.rowToNode(candidateRow);
+      const tagOverlap = node.tags.filter((tag) => targetTags.has(tag)).length;
+      const score =
+        1 / (10 + index + 1) +
+        Math.min(0.2, tagOverlap * 0.05) +
+        (node.kind === target.kind ? 0.03 : 0);
+      consider(node, score, "lexical");
+    });
+
+    for (const edge of this.getEdges(target.id).slice(0, 20)) {
+      if (edge.type === "contradicts") continue;
+      const neighborID = edge.fromID === target.id ? edge.toID : edge.fromID;
+      const neighborRow = this.getRow(neighborID);
+      if (!neighborRow) continue;
+      const node = this.rowToNode(neighborRow);
+      const tagOverlap = node.tags.filter((tag) => targetTags.has(tag)).length;
+      consider(node, 0.35 + Math.min(0.1, tagOverlap * 0.03), `via ${edge.type}`);
+    }
+
+    return [...ranked.values()]
+      .sort((left, right) => right.score - left.score)
+      .slice(0, limit)
+      .map((entry) => entry.node);
+  }
+
+  conflictTargets(options: { scope?: string; limit?: number } = {}): MemoryNode[] {
+    const limit = clamp(Math.floor(options.limit ?? 3), 1, 10);
+    return this.db
+      .prepare(
+        `SELECT n.*,
+                (SELECT COUNT(*) FROM injections i WHERE i.node_id = n.id) AS injection_count
+         FROM nodes n
+         WHERE n.status = 'active' AND n.auto_inject_eligible = 1
+         ORDER BY n.confidence ASC, injection_count DESC, n.updated_at DESC
+         LIMIT 500`,
+      )
+      .all()
+      .map((row) => this.rowToNode(row))
+      .filter((node) => isClaimKind(node.kind))
+      .filter(
+        (node) =>
+          !options.scope ||
+          !node.scope.length ||
+          anyScopeMatches(node.scope, [options.scope]),
+      )
+      .slice(0, limit);
+  }
+
   private passesRecallFilters(node: MemoryNode, query: RecallQuery, statuses: Set<NodeStatus>): boolean {
     if (!statuses.has(node.status)) return false;
     if (query.kinds?.length && !query.kinds.includes(node.kind)) return false;
@@ -1043,7 +1150,10 @@ export class MemoryStore {
     return { node: root, neighbors };
   }
 
-  citationChecks(id: string): CitationCheck[] {
+  citationChecks(
+    id: string,
+    options: SourceSnapshotOptions & { includeContent?: boolean } = {},
+  ): CitationCheck[] {
     const row = this.getRow(id);
     if (!row) return [];
     const node = this.rowToNode(row);
@@ -1059,7 +1169,14 @@ export class MemoryStore {
         if (citation.contentHash && sha256(content) !== citation.contentHash) {
           return { nodeID: node.id, citation, status: "changed" as const };
         }
-        return { nodeID: node.id, citation, status: "ok" as const };
+        return {
+          nodeID: node.id,
+          citation,
+          status: "ok" as const,
+          ...(options.includeContent
+            ? { snapshot: buildCitationSnapshot(citation, content, options) }
+            : {}),
+        };
       } catch {
         return { nodeID: node.id, citation, status: "missing" as const };
       }
@@ -1359,8 +1476,267 @@ export class MemoryStore {
         if (node.status === "stale") reasons.push("stale citation");
         return { node, reasons };
       })
-      .filter((item) => item.reasons.length > 0)
+      .filter(
+        (item) =>
+          item.reasons.length > 0 &&
+          item.node.status !== "archived" &&
+          item.node.status !== "superseded",
+      )
       .slice(0, 100);
+  }
+
+  getConflictProposal(nodeA: string, nodeB: string): ConflictProposal | undefined {
+    const [a, b] = canonicalPair(nodeA, nodeB);
+    const row = this.db
+      .prepare("SELECT * FROM conflict_proposals WHERE node_a = ? AND node_b = ?")
+      .get(a, b);
+    return row ? this.rowToConflictProposal(row) : undefined;
+  }
+
+  conflictProposals(
+    options: { status?: ConflictStatus; limit?: number } = {},
+  ): ConflictProposal[] {
+    const limit = clamp(Math.floor(options.limit ?? 50), 1, 200);
+    const rows = options.status
+      ? this.db
+          .prepare(
+            "SELECT * FROM conflict_proposals WHERE status = ? ORDER BY updated_at DESC LIMIT ?",
+          )
+          .all(options.status, limit)
+      : this.db
+          .prepare("SELECT * FROM conflict_proposals ORDER BY updated_at DESC LIMIT ?")
+          .all(limit);
+    return rows
+      .map((row) => this.rowToConflictProposal(row))
+      .filter((proposal): proposal is ConflictProposal => Boolean(proposal));
+  }
+
+  upsertConflictProposal(
+    input: ConflictProposalInput,
+    author: Author = { type: "system", id: "conflict-discovery" },
+  ): ConflictProposal | undefined {
+    return transaction(this.db, () => {
+      const [a, b] = canonicalPair(input.nodeA, input.nodeB);
+      const aRow = this.getRow(a);
+      const bRow = this.getRow(b);
+      if (!aRow || !bRow) return undefined;
+      const nodeA = this.rowToNode(aRow);
+      const nodeB = this.rowToNode(bRow);
+      const existing = this.getConflictProposal(a, b);
+      if (existing?.status === "confirmed") return existing;
+      if (
+        existing?.status === "dismissed" &&
+        existing.nodeAVersion === nodeA.version &&
+        existing.nodeBVersion === nodeB.version
+      ) {
+        return existing;
+      }
+      const now = this.now();
+      this.db
+        .prepare(
+          `INSERT INTO conflict_proposals
+            (node_a, node_b, node_a_version, node_b_version, status, relation,
+             confidence, reason, evidence_json, input_hash, created_at, updated_at)
+           VALUES(?, ?, ?, ?, 'proposed', ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(node_a, node_b) DO UPDATE SET
+             node_a_version = excluded.node_a_version,
+             node_b_version = excluded.node_b_version,
+             status = 'proposed',
+             relation = excluded.relation,
+             confidence = excluded.confidence,
+             reason = excluded.reason,
+             evidence_json = excluded.evidence_json,
+             input_hash = excluded.input_hash,
+             updated_at = excluded.updated_at`,
+        )
+        .run(
+          a,
+          b,
+          nodeA.version,
+          nodeB.version,
+          input.relation,
+          clamp(input.confidence, 0, 1),
+          input.reason,
+          JSON.stringify(input.evidence),
+          input.inputHash,
+          now,
+          now,
+        );
+      this.recordEvent(author, "conflict_propose", a, {
+        target: b,
+        confidence: clamp(input.confidence, 0, 1),
+        relation: input.relation,
+      });
+      return this.getConflictProposal(a, b);
+    });
+  }
+
+  confirmConflict(
+    nodeA: string,
+    nodeB: string,
+    author: Author,
+    reason: string,
+  ): ConflictProposal | undefined {
+    return transaction(this.db, () => {
+      const [a, b] = canonicalPair(nodeA, nodeB);
+      const proposal = this.getConflictProposal(a, b);
+      if (!proposal) throw new Error(`No conflict proposal found for ${a} and ${b}`);
+      if (proposal.stale) {
+        throw new Error("Conflict proposal is stale; run conflict discovery again.");
+      }
+      for (const node of [proposal.nodeA, proposal.nodeB]) {
+        if (node.status === "archived" || node.status === "superseded") {
+          throw new Error(`Cannot confirm a conflict involving a ${node.status} claim.`);
+        }
+      }
+      const now = this.now();
+      this.db
+        .prepare(
+          `INSERT INTO edges(from_id, to_id, type, weight, metadata_json, created_at)
+           VALUES(?, ?, 'contradicts', 1, '{}', ?)
+           ON CONFLICT(from_id, to_id, type) DO UPDATE SET retired_at = NULL`,
+        )
+        .run(a, b, now);
+      const update = this.db.prepare(
+        `UPDATE nodes SET status = 'disputed', auto_inject_eligible = 0, updated_at = ?
+         WHERE id = ?`,
+      );
+      update.run(now, a);
+      update.run(now, b);
+      this.db
+        .prepare(
+          "UPDATE conflict_proposals SET status = 'confirmed', updated_at = ? WHERE node_a = ? AND node_b = ?",
+        )
+        .run(now, a, b);
+      const audit = this.db.prepare(
+        `INSERT INTO audits
+          (node_id, node_version, trigger, sampled_by, risk_score, auditor_json,
+           outcome, findings_json, created_at)
+         VALUES(?, ?, 'manual', 'conflict_confirm', 0, ?, 'contradicted', ?, ?)`,
+      );
+      audit.run(
+        proposal.nodeA.id,
+        proposal.nodeA.version,
+        JSON.stringify(author),
+        JSON.stringify({ kind: "conflict_confirm", target: proposal.nodeB.id, reason }),
+        now,
+      );
+      audit.run(
+        proposal.nodeB.id,
+        proposal.nodeB.version,
+        JSON.stringify(author),
+        JSON.stringify({ kind: "conflict_confirm", target: proposal.nodeA.id, reason }),
+        now,
+      );
+      this.recordEvent(author, "conflict_confirm", a, { target: b, reason });
+      return this.getConflictProposal(a, b);
+    });
+  }
+
+  dismissConflict(
+    nodeA: string,
+    nodeB: string,
+    author: Author,
+    reason: string,
+  ): ConflictProposal | undefined {
+    return transaction(this.db, () => {
+      const [a, b] = canonicalPair(nodeA, nodeB);
+      const proposal = this.getConflictProposal(a, b);
+      if (!proposal) throw new Error(`No conflict proposal found for ${a} and ${b}`);
+      if (proposal.status === "confirmed") {
+        throw new Error("A confirmed conflict cannot be dismissed.");
+      }
+      const now = this.now();
+      this.db
+        .prepare(
+          "UPDATE conflict_proposals SET status = 'dismissed', updated_at = ? WHERE node_a = ? AND node_b = ?",
+        )
+        .run(now, a, b);
+      this.recordEvent(author, "conflict_dismiss", a, { target: b, reason });
+      return this.getConflictProposal(a, b);
+    });
+  }
+
+  findConflictScan(nodeID: string, inputHash: string): AuditInfo | undefined {
+    return this.db
+      .prepare(
+        `SELECT * FROM audits
+         WHERE node_id = ? AND sampled_by = 'memory_conflicts'
+         ORDER BY created_at DESC, id DESC
+         LIMIT 20`,
+      )
+      .all(nodeID)
+      .map((row) => this.rowToAudit(row))
+      .find(
+        (audit) =>
+          audit.findings.inputHash === inputHash && audit.findings.cacheable === true,
+      );
+  }
+
+  recordConflictScan(
+    nodeID: string,
+    inputHash: string,
+    outcome: "no_conflict" | "conflict_proposed",
+    findings: Record<string, unknown>,
+    author: Author,
+  ): void {
+    const row = this.getRow(nodeID);
+    if (!row) return;
+    const node = this.rowToNode(row);
+    const now = this.now();
+    this.db
+      .prepare(
+        `INSERT INTO audits
+          (node_id, node_version, trigger, sampled_by, risk_score, auditor_json,
+           outcome, findings_json, created_at)
+         VALUES(?, ?, 'verification', 'memory_conflicts', 0, ?, ?, ?, ?)`,
+      )
+      .run(
+        node.id,
+        node.version,
+        JSON.stringify({ tool: "memory_conflicts" }),
+        outcome,
+        JSON.stringify({
+          ...findings,
+          kind: "conflict_scan",
+          inputHash,
+          cacheable: true,
+        }),
+        now,
+      );
+    this.recordEvent(author, "conflict_scan", node.id, {
+      inputHash,
+      outcome,
+    });
+  }
+
+  private rowToConflictProposal(row: Row): ConflictProposal | undefined {
+    const aRow = this.getRow(String(row.node_a));
+    const bRow = this.getRow(String(row.node_b));
+    if (!aRow || !bRow) return undefined;
+    const nodeA = this.rowToNode(aRow);
+    const nodeB = this.rowToNode(bRow);
+    const status = String(row.status) as ConflictStatus;
+    const nodeAVersion = Number(row.node_a_version);
+    const nodeBVersion = Number(row.node_b_version);
+    return {
+      id: Number(row.id),
+      nodeA,
+      nodeB,
+      nodeAVersion,
+      nodeBVersion,
+      status,
+      relation: String(row.relation) as ConflictProposal["relation"],
+      confidence: Number(row.confidence),
+      reason: String(row.reason),
+      evidence: parseJson<ConflictProposal["evidence"]>(row.evidence_json, []),
+      inputHash: String(row.input_hash),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+      stale:
+        status === "proposed" &&
+        (nodeA.version !== nodeAVersion || nodeB.version !== nodeBVersion),
+    };
   }
 
   stats(): MemoryStats {
@@ -1879,6 +2255,10 @@ export class MemoryStore {
   }
 }
 
+function canonicalPair(nodeA: string, nodeB: string): [string, string] {
+  return nodeA.localeCompare(nodeB) <= 0 ? [nodeA, nodeB] : [nodeB, nodeA];
+}
+
 function parseJson<T>(value: unknown, fallback: T): T {
   if (typeof value !== "string" || !value) return fallback;
   try {
@@ -1966,23 +2346,6 @@ function buildFtsQuery(value: string): string | undefined {
   const tokens = queryTokensFor(value);
   if (!tokens.length) return undefined;
   return tokens.map((token) => `"${token.replaceAll('"', '""')}"`).join(" OR ");
-}
-
-function containsSecret(value: string): boolean {
-  return (
-    /-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(value) ||
-    /\b(sk-[A-Za-z0-9]{16,}|ghp_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16})\b/.test(value) ||
-    /\b(api[_-]?key|secret|password|passwd|access[_-]?token)\s*[:=]\s*['"]?[A-Za-z0-9_\-]{16,}/i.test(value)
-  );
-}
-
-function containsInstructionLikeText(value: string): boolean {
-  return (
-    /\bignore (all )?(previous|prior) instructions\b/i.test(value) ||
-    /\bdisregard (the )?(above|previous)\b/i.test(value) ||
-    /\byou are now\b/i.test(value) ||
-    /\bsystem prompt\b/i.test(value)
-  );
 }
 
 function groupCount(db: SqliteDatabase, column: string): Record<string, number> {

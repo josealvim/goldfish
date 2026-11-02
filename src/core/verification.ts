@@ -12,6 +12,7 @@ import type {
 import type { MemoryStore } from "./store.ts";
 import { anyScopeMatches } from "./glob.ts";
 import { shortHash } from "./ids.ts";
+import { capSnapshotBudget } from "./sources.ts";
 
 export type VerificationVerdictKind =
   | "supported"
@@ -88,6 +89,18 @@ export interface VerificationVerdict {
 
 export interface Verifier {
   verify(packet: VerificationPacket): Promise<VerificationVerdict>;
+}
+
+export interface VerificationPacketOptions {
+  readSources?: boolean;
+  windowLines?: number;
+  maxSourceBytes?: number;
+  maxPacketSourceBytes?: number;
+  maxCitations?: number;
+  maxPremises?: number;
+  maxConflicts?: number;
+  maxContext?: number;
+  maxHistory?: number;
 }
 
 export interface VerificationApplyContext {
@@ -177,13 +190,29 @@ function hasDerivedCycle(store: MemoryStore, startID: string): boolean {
   return visit(startID);
 }
 
-export function buildVerificationPacket(store: MemoryStore, id: string): VerificationPacket | undefined {
+export function buildVerificationPacket(
+  store: MemoryStore,
+  id: string,
+  options: VerificationPacketOptions = {},
+): VerificationPacket | undefined {
   const detail = store.get(id);
   if (!detail) return undefined;
   const node = detail.node;
-  const allCitationChecks = store.citationChecks(node.id);
-  const citationChecks = allCitationChecks.slice(0, MAX_PACKET_ITEMS);
-  const citations = detail.citations.slice(0, MAX_PACKET_ITEMS).map(boundedCitation);
+  const maxCitations = Math.max(1, Math.floor(options.maxCitations ?? MAX_PACKET_ITEMS));
+  const maxPremises = Math.max(0, Math.floor(options.maxPremises ?? MAX_PACKET_ITEMS));
+  const maxConflicts = Math.max(0, Math.floor(options.maxConflicts ?? MAX_PACKET_ITEMS));
+  const maxContext = Math.max(0, Math.floor(options.maxContext ?? MAX_PACKET_ITEMS));
+  const maxHistory = Math.max(0, Math.floor(options.maxHistory ?? MAX_PACKET_ITEMS));
+  const allCitationChecks = store.citationChecks(node.id, {
+    includeContent: options.readSources !== false,
+    windowLines: options.windowLines,
+    maxSourceBytes: options.maxSourceBytes,
+  });
+  const citationChecks = capSnapshotBudget(
+    allCitationChecks.slice(0, maxCitations),
+    options.maxPacketSourceBytes ?? 12_000,
+  );
+  const citations = detail.citations.slice(0, maxCitations).map(boundedCitation);
   const premises: VerificationPremise[] = [];
   const conflicts: VerificationConflict[] = [];
   const context: VerificationContext[] = [];
@@ -200,14 +229,14 @@ export function buildVerificationPacket(store: MemoryStore, id: string): Verific
       );
       premises.push({
         node: other.node,
-        citations: other.citations.slice(0, MAX_PACKET_ITEMS).map(boundedCitation),
+        citations: other.citations.slice(0, maxCitations).map(boundedCitation),
         sound: sound.sound,
         reasons: sound.reasons,
       });
     } else if (edge.type === "contradicts") {
       conflicts.push({
         node: other.node,
-        citations: other.citations.slice(0, MAX_PACKET_ITEMS).map(boundedCitation),
+        citations: other.citations.slice(0, maxCitations).map(boundedCitation),
         edge: edge.type,
       });
     } else if (
@@ -236,6 +265,28 @@ export function buildVerificationPacket(store: MemoryStore, id: string): Verific
           ? `citation file is missing: ${check.citation.locator}`
           : `citation content changed: ${check.citation.locator}`,
       );
+    }
+    if (check.snapshot?.skipReason) {
+      warnings.push(
+        `source snapshot skipped for ${check.citation.locator}: ${check.snapshot.skipReason}`,
+      );
+    }
+    if (
+      check.snapshot &&
+      !check.snapshot.skipReason &&
+      !check.snapshot.excerptFound &&
+      check.citation.excerpt
+    ) {
+      warnings.push(`cited excerpt not found in current source: ${check.citation.locator}`);
+    }
+    if (check.snapshot?.promptInjectionDetected) {
+      warnings.push(`source contains instruction-like text: ${check.citation.locator}`);
+    }
+    if (check.snapshot?.redacted) {
+      warnings.push(`source snapshot redacted possible secrets: ${check.citation.locator}`);
+    }
+    if (check.snapshot?.truncated) {
+      warnings.push(`source snapshot truncated: ${check.citation.locator}`);
     }
   }
   if (detail.citations.some((citation) => citation.validation === "missing")) {
@@ -271,10 +322,10 @@ export function buildVerificationPacket(store: MemoryStore, id: string): Verific
     node,
     citations,
     citationChecks,
-    premises: premises.slice(0, MAX_PACKET_ITEMS),
-    conflicts: conflicts.slice(0, MAX_PACKET_ITEMS),
-    context: context.slice(0, MAX_PACKET_ITEMS),
-    history: detail.audits.slice(0, MAX_PACKET_ITEMS),
+    premises: premises.slice(0, maxPremises),
+    conflicts: conflicts.slice(0, maxConflicts),
+    context: context.slice(0, maxContext),
+    history: maxHistory ? detail.audits.slice(0, maxHistory) : [],
     deterministic: {
       ok: reasons.length === 0,
       stale,
@@ -345,6 +396,9 @@ export function buildVerificationPrompt(packet: VerificationPacket): string {
       status: packet.node.status,
       confidence: packet.node.confidence,
       version: packet.node.version,
+      validFrom: packet.node.validFrom,
+      validTo: packet.node.validTo,
+      updatedAt: packet.node.updatedAt,
     },
     citations: packet.citations.map((citation) => ({
       type: citation.type,
@@ -356,6 +410,18 @@ export function buildVerificationPrompt(packet: VerificationPacket): string {
       locator: check.citation.locator,
       type: check.citation.type,
       status: check.status,
+      snapshot: check.snapshot
+        ? {
+            lineStart: check.snapshot.lineStart,
+            lineEnd: check.snapshot.lineEnd,
+            truncated: check.snapshot.truncated,
+            excerptFound: check.snapshot.excerptFound,
+            redacted: check.snapshot.redacted,
+            promptInjectionDetected: check.snapshot.promptInjectionDetected,
+            skipReason: check.snapshot.skipReason,
+            content: check.snapshot.content,
+          }
+        : undefined,
     })),
     premises: packet.premises.map((premise) => ({
       id: premise.node.id,
@@ -415,7 +481,7 @@ export function buildVerificationPrompt(packet: VerificationPacket): string {
       2,
     ),
     "INPUT:",
-    JSON.stringify(input, null, 2).slice(0, 12_000),
+    JSON.stringify(input, null, 2).slice(0, 32_000),
   ].join("\n");
 }
 
@@ -516,7 +582,21 @@ export function verificationInputHash(packet: VerificationPacket, salt = "sessio
         citation.excerptHash ?? "",
         citation.contentHash ?? "",
       ]),
-      citationChecks: packet.citationChecks.map((check) => [check.citation.locator, check.status]),
+      citationChecks: packet.citationChecks.map((check) => [
+        check.citation.locator,
+        check.status,
+        check.snapshot
+          ? [
+              check.snapshot.contentHash,
+              check.snapshot.lineStart,
+              check.snapshot.lineEnd,
+              check.snapshot.truncated,
+              check.snapshot.excerptFound,
+              check.snapshot.redacted,
+              check.snapshot.skipReason ?? "",
+            ]
+          : "",
+      ]),
       premises: packet.premises.map((premise) => [premise.node.id, premise.node.version, premise.sound]),
       conflicts: packet.conflicts.map((conflict) => [conflict.node.id, conflict.node.version]),
       deterministic: packet.deterministic,
@@ -533,6 +613,7 @@ export function findCachedVerification(
     return (
       findings.inputHash === inputHash &&
       findings.cacheable === true &&
+      findings.kind !== "conflict_scan" &&
       (audit.trigger === "verification" ||
         audit.trigger === "uniform" ||
         audit.trigger === "risk" ||

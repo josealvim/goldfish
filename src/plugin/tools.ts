@@ -11,17 +11,28 @@ import {
   formatRemember,
   formatReview,
 } from "../core/format.ts";
+import { conflictInputHash } from "../core/conflicts.ts";
 import {
   applyVerificationVerdict,
   buildVerificationPacket,
   findCachedVerification,
   verificationInputHash,
+  type VerificationPacket,
+  type VerificationPacketOptions,
 } from "../core/verification.ts";
-import { BASES, EDGE_TYPES, NODE_KINDS, NODE_STATUSES, SOURCE_TYPES } from "../core/types.ts";
+import {
+  BASES,
+  EDGE_TYPES,
+  NODE_KINDS,
+  NODE_STATUSES,
+  SOURCE_TYPES,
+  isClaimKind,
+} from "../core/types.ts";
 import type {
   AuditRecordInput,
   Basis,
   CitationInput,
+  ConflictFinding,
   EdgeType,
   MemoryProposal,
   NeighborOptions,
@@ -118,6 +129,20 @@ interface AuditInput {
   outcome?: AuditRecordInput["outcome"];
   trigger?: AuditRecordInput["trigger"];
   reason?: string;
+}
+
+interface ConflictsInput {
+  ids?: string[];
+  scope?: string;
+  limit?: number;
+  candidatesPerClaim?: number;
+}
+
+interface ConflictAdminInput {
+  action: "confirm" | "dismiss";
+  from: string;
+  to: string;
+  reason: string;
 }
 
 const recallSchema = {
@@ -358,6 +383,29 @@ const reviewSchema = {
   properties: {
     limit: { type: "integer", minimum: 1, maximum: 100 },
   },
+  additionalProperties: false,
+} as const;
+
+const conflictsSchema = {
+  type: "object",
+  properties: {
+    ids: { type: "array", items: { type: "string" } },
+    scope: { type: "string" },
+    limit: { type: "integer", minimum: 1, maximum: 10 },
+    candidatesPerClaim: { type: "integer", minimum: 1, maximum: 8 },
+  },
+  additionalProperties: false,
+} as const;
+
+const conflictAdminSchema = {
+  type: "object",
+  properties: {
+    action: { type: "string", enum: ["confirm", "dismiss"] },
+    from: { type: "string" },
+    to: { type: "string" },
+    reason: { type: "string" },
+  },
+  required: ["action", "from", "to", "reason"],
   additionalProperties: false,
 } as const;
 
@@ -624,7 +672,11 @@ export async function registerTools(ctx: PluginContext, runtime: Runtime): Promi
         const cacheSalt = runtime.verificationModel ?? "session";
 
         for (const node of selected) {
-          const packet = buildVerificationPacket(runtime.store, node.id);
+          const packet = buildVerificationPacket(
+            runtime.store,
+            node.id,
+            verificationPacketOptions(runtime),
+          );
           if (!packet) continue;
           const inputHash = verificationInputHash(packet, cacheSalt);
           if (runtime.verificationSemantic && !packet.deterministic.stale) {
@@ -711,10 +763,231 @@ export async function registerTools(ctx: PluginContext, runtime: Runtime): Promi
       options: { namespace: "memory", codemode: false },
       execute: async (raw) => {
         const input = (raw ?? {}) as ReviewInput;
-        const items = runtime.store.review().slice(0, input.limit ?? 50);
+        const limit = input.limit ?? 50;
+        const items = runtime.store.review().slice(0, limit);
+        const conflicts = runtime.store
+          .conflictProposals({ status: "proposed", limit })
+          .filter((proposal) => !proposal.stale);
         return {
-          content: formatReview(items),
-          metadata: { count: items.length, ids: items.map((item) => item.node.id) },
+          content: formatReview(items, conflicts),
+          metadata: {
+            count: items.length,
+            ids: items.map((item) => item.node.id),
+            conflictCount: conflicts.length,
+            conflictIDs: conflicts.map((proposal) => [proposal.nodeA.id, proposal.nodeB.id]),
+          },
+        };
+      },
+    });
+
+    editor.add({
+      name: "conflicts",
+      description:
+        "Discover likely conflicts between a claim and related claims. Compares bounded current-source evidence, " +
+        "returns contradictions only, and records proposals for human review. It never disputes either claim " +
+        "automatically. Use memory_admin.conflict to confirm or dismiss a proposal.",
+      input: conflictsSchema,
+      options: { namespace: "memory", codemode: false },
+      execute: async (raw, context) => {
+        const input = (raw ?? {}) as ConflictsInput;
+        const verifier = runtime.conflictVerifier;
+        if (!verifier) {
+          return {
+            content:
+              "Semantic conflict discovery is disabled because verification.semantic is false.",
+            metadata: { checked: 0, results: [] },
+          };
+        }
+        const limit = Math.max(
+          1,
+          Math.min(input.limit ?? runtime.conflictMaxPerRun, runtime.conflictMaxPerRun),
+        );
+        const nodes = (
+          input.ids?.length
+            ? input.ids.flatMap((id) => {
+                const detail = runtime.store.get(id);
+                return detail ? [detail.node] : [];
+              })
+            : runtime.store.conflictTargets({ scope: input.scope, limit })
+        ).filter((node) => isClaimKind(node.kind));
+        const selected = nodes.slice(0, limit);
+        if (selected.length) {
+          await assertWrite(
+            ctx,
+            runtime,
+            context,
+            "memory.conflicts",
+            selected.map((node) => node.id),
+          );
+        }
+        const author = writeContext(context).author;
+        const cacheSalt = runtime.verificationModel ?? "session";
+        const candidatesPerClaim = Math.max(
+          1,
+          Math.min(
+            input.candidatesPerClaim ?? runtime.conflictCandidatesPerClaim,
+            runtime.conflictCandidatesPerClaim,
+          ),
+        );
+        const results: Array<Record<string, unknown>> = [];
+
+        for (const target of selected) {
+          const targetPacket = buildVerificationPacket(
+            runtime.store,
+            target.id,
+            verificationPacketOptions(runtime, {
+              maxCitations: 4,
+              maxPremises: 3,
+              maxConflicts: 0,
+              maxContext: 0,
+              maxHistory: 0,
+            }),
+          );
+          if (!targetPacket || targetPacket.deterministic.stale) {
+            results.push({ id: target.id, skipped: true, reason: "target evidence is stale" });
+            continue;
+          }
+
+          const candidates = runtime.store
+            .relatedClaims(target.id, { limit: candidatesPerClaim })
+            .filter((candidate) => {
+              const existing = runtime.store.getConflictProposal(target.id, candidate.id);
+              if (!existing) return true;
+              const sameVersions =
+                existing.nodeAVersion === existing.nodeA.version &&
+                existing.nodeBVersion === existing.nodeB.version;
+              if (existing.status === "confirmed") return false;
+              if (existing.status === "dismissed" && sameVersions) return false;
+              if (existing.status === "proposed" && sameVersions) return false;
+              return true;
+            });
+          const candidatePackets = candidates.flatMap((candidate) => {
+            const packet = buildVerificationPacket(
+              runtime.store,
+              candidate.id,
+              verificationPacketOptions(runtime, {
+                maxCitations: 3,
+                maxPremises: 2,
+                maxConflicts: 0,
+                maxContext: 0,
+                maxHistory: 0,
+                maxPacketSourceBytes: Math.min(
+                  runtime.verificationMaxPacketSourceBytes,
+                  8_000,
+                ),
+              }),
+            );
+            return packet && !packet.deterministic.stale ? [packet] : [];
+          });
+          if (!candidatePackets.length) {
+            results.push({
+              id: target.id,
+              candidates: 0,
+              findings: [],
+              cached: false,
+            });
+            continue;
+          }
+
+          const inputHash = conflictInputHash(targetPacket, candidatePackets, cacheSalt);
+          const cached = runtime.store.findConflictScan(target.id, inputHash);
+          let findings: ConflictFinding[] = [];
+          let cachedResult = false;
+          if (cached) {
+            findings = Array.isArray(cached.findings.findings)
+              ? (cached.findings.findings as ConflictFinding[])
+              : [];
+            cachedResult = true;
+          } else {
+            const verdict = await verifier.find(targetPacket, candidatePackets);
+            if (verdict.error) {
+              results.push({
+                id: target.id,
+                candidates: candidatePackets.length,
+                findings: [],
+                error: verdict.error,
+              });
+              continue;
+            }
+            findings = verdict.findings.filter(
+              (finding) => finding.confidence >= runtime.conflictMinConfidence,
+            );
+            for (const finding of findings) {
+              const candidate = candidatePackets.find(
+                (packet) => packet.node.id === finding.candidateID,
+              );
+              if (!candidate) continue;
+              runtime.store.upsertConflictProposal(
+                {
+                  nodeA: targetPacket.node.id,
+                  nodeB: candidate.node.id,
+                  nodeAVersion: targetPacket.node.version,
+                  nodeBVersion: candidate.node.version,
+                  relation: finding.relation,
+                  confidence: finding.confidence,
+                  reason: finding.reason,
+                  evidence: finding.evidence,
+                  inputHash,
+                },
+                author,
+              );
+            }
+            if (verdict.cacheable) {
+              runtime.store.recordConflictScan(
+                target.id,
+                inputHash,
+                findings.length ? "conflict_proposed" : "no_conflict",
+                {
+                  candidates: candidatePackets.map((packet) => packet.node.id),
+                  findings,
+                },
+                author,
+              );
+            }
+          }
+          results.push({
+            id: target.id,
+            candidates: candidatePackets.length,
+            findings,
+            cached: cachedResult,
+          });
+        }
+
+        if (!results.length) {
+          return {
+            content: "No conflict discovery targets matched.",
+            metadata: { checked: 0, results: [] },
+          };
+        }
+        const lines = [`Conflict discovery: ${results.length} target(s)`, ""];
+        for (const result of results) {
+          if (result.skipped) {
+            lines.push(`- ${String(result.id)}: skipped (${String(result.reason)})`);
+            continue;
+          }
+          if (result.error) {
+            lines.push(
+              `- ${String(result.id)}: error — ${String(result.error)}`,
+            );
+            continue;
+          }
+          const findings = Array.isArray(result.findings)
+            ? (result.findings as ConflictFinding[])
+            : [];
+          const suffix = result.cached ? " (cached)" : "";
+          lines.push(
+            `- ${String(result.id)}: ${String(result.candidates)} candidate(s), ` +
+              `${findings.length} proposed conflict(s)${suffix}`,
+          );
+          for (const finding of findings) {
+            lines.push(
+              `  · ${finding.candidateID} [${finding.confidence.toFixed(2)}] ${finding.reason}`,
+            );
+          }
+        }
+        return {
+          content: lines.join("\n"),
+          metadata: { checked: results.length, results },
         };
       },
     });
@@ -794,7 +1067,11 @@ export async function registerTools(ctx: PluginContext, runtime: Runtime): Promi
         const cacheSalt = runtime.verificationModel ?? "session";
         const results: Array<Record<string, unknown>> = [];
         for (const candidate of candidates) {
-          const packet = buildVerificationPacket(runtime.store, candidate.node.id);
+          const packet = buildVerificationPacket(
+            runtime.store,
+            candidate.node.id,
+            verificationPacketOptions(runtime),
+          );
           if (!packet) continue;
           const inputHash = verificationInputHash(packet, cacheSalt);
           if (runtime.verificationSemantic && !packet.deterministic.stale) {
@@ -873,7 +1150,8 @@ export async function registerTools(ctx: PluginContext, runtime: Runtime): Promi
 
     editor.namespace({
       name: "memory_admin",
-      description: "Precise memory maintenance: cite, link, unlink, update, archive, and audit.",
+      description:
+        "Precise memory maintenance: cite, link, unlink, update, archive, audit, and conflict review.",
     });
 
     editor.add({
@@ -972,6 +1250,58 @@ export async function registerTools(ctx: PluginContext, runtime: Runtime): Promi
         };
       },
     });
+
+    editor.add({
+      name: "conflict",
+      description:
+        "Confirm or dismiss a proposed conflict. Confirming adds a contradicts edge and marks both claims " +
+        "disputed; dismissing leaves both claims untouched. Use confirm only on explicit human instruction.",
+      input: conflictAdminSchema,
+      options: { namespace: "memory_admin", codemode: true },
+      execute: async (raw, context) => {
+        const input = raw as unknown as ConflictAdminInput;
+        await assertWrite(
+          ctx,
+          runtime,
+          context,
+          "memory.conflict",
+          [input.from, input.to],
+          input.action === "confirm",
+        );
+        const proposal =
+          input.action === "confirm"
+            ? runtime.store.confirmConflict(
+                input.from,
+                input.to,
+                writeContext(context).author,
+                input.reason,
+              )
+            : runtime.store.dismissConflict(
+                input.from,
+                input.to,
+                writeContext(context).author,
+                input.reason,
+              );
+        if (!proposal) {
+          return {
+            content: `No conflict proposal found for ${input.from} and ${input.to}.`,
+            metadata: { found: false },
+          };
+        }
+        return {
+          content:
+            input.action === "confirm"
+              ? `Confirmed conflict ${proposal.nodeA.id} ↔ ${proposal.nodeB.id}; both claims are disputed.`
+              : `Dismissed conflict ${proposal.nodeA.id} ↔ ${proposal.nodeB.id}.`,
+          metadata: {
+            action: input.action,
+            status: proposal.status,
+            nodeA: proposal.nodeA.id,
+            nodeB: proposal.nodeB.id,
+          },
+        };
+      },
+    });
   });
 }
 
@@ -985,6 +1315,19 @@ function writeContext(context: ToolContext) {
     agent: String(context.agent),
     sessionID: String(context.sessionID),
     messageID: String(context.messageID),
+  };
+}
+
+function verificationPacketOptions(
+  runtime: Runtime,
+  overrides: VerificationPacketOptions = {},
+): VerificationPacketOptions {
+  return {
+    readSources: runtime.verificationReadSources,
+    windowLines: runtime.verificationWindowLines,
+    maxSourceBytes: runtime.verificationMaxSourceBytes,
+    maxPacketSourceBytes: runtime.verificationMaxPacketSourceBytes,
+    ...overrides,
   };
 }
 
