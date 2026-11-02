@@ -13,7 +13,7 @@ export interface InjectionPolicy {
 }
 
 export const DEFAULT_POLICY: InjectionPolicy = {
-  defaultAllowed: ["verified", "cited"],
+  defaultAllowed: ["verified", "cited", "derived"],
   strict: [
     { pattern: "auth/**", allowed: ["verified"] },
     { pattern: "**/auth/**", allowed: ["verified"] },
@@ -30,7 +30,8 @@ function rankAllowed(allowed: readonly Basis[]): number {
   if (set.size === 0) return 0;
   if (set.size === 1 && set.has("verified")) return 1;
   if (set.size === 2 && set.has("verified") && set.has("cited")) return 2;
-  return 3;
+  if (set.size === 3 && set.has("verified") && set.has("cited") && set.has("derived")) return 3;
+  return 4;
 }
 
 /**
@@ -69,6 +70,9 @@ export function isAutoInjectEligible(
   // Inferred claims are queryable, but they must be promoted to cited or
   // verified before they can be injected automatically.
   if (node.basis === "inferred") return false;
+  // Derived claims are trusted only after graph verification confirms that all
+  // premises are sound.
+  if (node.basis === "derived" && node.verificationState !== "confirmed") return false;
   return effectiveAllowedBasis(node, currentScope, policy).includes(node.basis);
 }
 
@@ -76,14 +80,19 @@ export function parseInjectionPolicy(value: unknown): InjectionPolicy {
   if (!value || typeof value !== "object") return DEFAULT_POLICY;
   const input = value as Partial<InjectionPolicy>;
   const defaultAllowed = Array.isArray(input.defaultAllowed)
-    ? input.defaultAllowed.filter((basis): basis is Basis => basis === "verified" || basis === "cited")
+    ? input.defaultAllowed.filter(
+        (basis): basis is Basis => basis === "verified" || basis === "cited" || basis === "derived",
+      )
     : DEFAULT_POLICY.defaultAllowed;
   const strict = Array.isArray(input.strict)
     ? input.strict
         .filter((rule): rule is StrictScopeRule => Boolean(rule && typeof rule.pattern === "string"))
         .map((rule) => {
           const allowed: Basis[] = Array.isArray(rule.allowed)
-            ? rule.allowed.filter((basis): basis is Basis => basis === "verified" || basis === "cited")
+            ? rule.allowed.filter(
+                (basis): basis is Basis =>
+                  basis === "verified" || basis === "cited" || basis === "derived",
+              )
             : ["verified"];
           return { pattern: rule.pattern, allowed };
         })

@@ -25,11 +25,14 @@ function node(
   };
 }
 
-test("default policy allows cited and verified, not inferred", () => {
-  assert.deepEqual(effectiveAllowedBasis(node({ basis: "verified" }), []), ["verified", "cited"]);
-  assert.deepEqual(effectiveAllowedBasis(node({ basis: "cited" }), []), ["verified", "cited"]);
+test("default policy allows cited, derived, and verified, not inferred", () => {
+  assert.deepEqual(effectiveAllowedBasis(node({ basis: "verified" }), []), ["verified", "cited", "derived"]);
+  assert.deepEqual(effectiveAllowedBasis(node({ basis: "cited" }), []), ["verified", "cited", "derived"]);
+  assert.deepEqual(effectiveAllowedBasis(node({ basis: "derived" }), []), ["verified", "cited", "derived"]);
   assert.equal(isAutoInjectEligible(node({ basis: "verified" })), true);
   assert.equal(isAutoInjectEligible(node({ basis: "cited" })), true);
+  assert.equal(isAutoInjectEligible(node({ basis: "derived", verificationState: "unverified" })), false);
+  assert.equal(isAutoInjectEligible(node({ basis: "derived", verificationState: "confirmed" })), true);
   assert.equal(isAutoInjectEligible(node({ basis: "inferred", verificationState: "unverified" })), false);
 });
 
@@ -47,6 +50,13 @@ test("strict scopes apply from either the claim scope or the current task scope"
   assert.equal(
     isAutoInjectEligible(node({ basis: "verified", scope: ["auth/session.ts"] }), ["auth/session.ts"]),
     true,
+  );
+  assert.equal(
+    isAutoInjectEligible(
+      node({ basis: "derived", verificationState: "confirmed", scope: ["auth/session.ts"] }),
+      ["auth/session.ts"],
+    ),
+    false,
   );
 });
 

@@ -123,6 +123,9 @@ Skip:
   citation. If part of the body is inference, remove that sentence or mark the
   whole claim `inferred`.
 - `basis: "inferred"` for guesses. These are queryable but not auto-injected.
+- `basis: "derived"` only when every premise is already `cited` or `verified`
+  and linked with `derived_from`. A derived claim is not auto-injected until the
+  graph verifier confirms all premises.
 - Do **not** use `verified` unless a human or a reproducible test confirmed the
   claim. The user confirming the overview is a human confirmation; record it as
   a `human` citation only when they explicitly confirm.

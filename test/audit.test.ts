@@ -48,6 +48,30 @@ test("audit sampling is deterministic and can select uniform or risk candidates"
   });
 });
 
+test("recent audits place claims in a cooldown without hiding revised versions", async () => {
+  await withStore((store) => {
+    const created = cited(store, "Cooldown target");
+    store.recordAudit({
+      nodeID: created.node!.id,
+      version: created.node!.version,
+      trigger: "manual",
+      outcome: "supported",
+    });
+    assert.equal(store.auditCandidates({ uniformRate: 1, riskRate: 1, max: 10 }).length, 0);
+
+    store.remember(
+      {
+        kind: "decision",
+        title: "Cooldown target",
+        body: "A materially revised body resets the audit cooldown.",
+        citations: [{ type: "file", locator: "docs/decisions.md" }],
+      },
+      { author },
+    );
+    assert.equal(store.auditCandidates({ uniformRate: 1, riskRate: 1, max: 10 }).length, 1);
+  });
+});
+
 test("recordAudit applies lifecycle outcomes", async () => {
   await withStore((store) => {
     const cases = [

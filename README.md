@@ -10,17 +10,26 @@ can contribute durable claims back to the project.
 The design is **optimistic writes, earned injection**:
 
 - Every valid claim is stored and queryable immediately.
-- `verified` and `cited` claims can be auto-injected in normal scopes.
-- `inferred` claims are queryable through explicit recall but must be confirmed
-  by a human or an independent verifier before automatic injection.
+- `verified`, `cited`, and confirmed `derived` claims can be auto-injected in
+  normal scopes.
+- `inferred` and unconfirmed `derived` claims are queryable through explicit
+  recall but must be confirmed by a human or an independent, rejection-leaning
+  verifier before automatic injection.
 - `disputed` and `stale` claims require explicit recall and are shown with a
-  warning.
+  warning. Conflicts leave both sides disputed and are not auto-resolved.
 - Memory is evidence, not authority. The agent verifies against current sources
   before editing.
 
-This repository is the walking skeleton: the core store, CLI, OpenCode plugin,
-skill, seed data, and tests. The automated verifier/audit/repair workers and
-structural ingestion adapters are the next slices.
+Verification is layered: deterministic citation and graph checks run first, a
+semantic verifier runs only when needed, audits are sampled, and human review
+handles ambiguity and ratification. Only a human, a reproducible test, or a
+commit can make a claim `verified`; a model may suggest ratification but cannot
+grant it.
+
+This repository contains the core store, CLI, OpenCode plugin, skills, seed
+data, and tests. The verifier, audit runner, and review queue are command-first;
+background workers, automated repair, and structural ingestion adapters are the
+next slices.
 
 ## Install from GitHub
 
@@ -32,7 +41,7 @@ No npm publish is required. The package is installed directly from Git.
 opencode plugin add github:josealvim/goldfish
 
 # Pin a release tag
-opencode plugin add github:josealvim/goldfish#v0.3.1
+opencode plugin add github:josealvim/goldfish#v0.4.0
 ```
 
 Or clone the repository and run the installer:
@@ -67,10 +76,11 @@ If a project already has the local development wrapper at
 Git plugin in that same project. OpenCode will list both copies. Use one or the
 other: the local wrapper for development, the Git install for consumption.
 
-The plugin registers the `project-memory` and `goldfish-onboarding` skills
-itself, so no project-local skill is required. A plain clone works without
-`npm install`: OpenCode provides `@opencode/plugin`, and the plugin entry is
-ordinary TypeScript. Restart OpenCode or run `/reload`, then verify with:
+The plugin registers the `project-memory`, `goldfish-onboarding`, and
+`goldfish-verification` skills itself, so no project-local skill is required. A
+plain clone works without `npm install`: OpenCode provides `@opencode/plugin`,
+and the plugin entry is ordinary TypeScript. Restart OpenCode or run `/reload`,
+then verify with:
 
 ```sh
 opencode plugin list
@@ -105,11 +115,16 @@ npm run memory -- recall "how does injection work?"
 | `memory_neighbors` | Walk the knowledge graph one or two hops. |
 | `memory_status` | Show memory coverage and whether onboarding is recommended. |
 | `memory_list` | List nodes by kind, status, basis, scope, or tag, with citation and edge counts. |
-| `memory_health` | Show uncited, stale, disputed, orphaned, low-confidence, backlog, and renamed-ID diagnostics. |
+| `memory_health` | Show uncited, stale, disputed, orphaned, low-confidence, backlog, ratification, and renamed-ID diagnostics. |
+| `memory_verify` | Verify inferred/derived claims with deterministic checks plus an optional semantic verifier. Never promotes to `verified`; may suggest ratification. |
+| `memory_review` | Show the review queue: unverified, needs-human, disputed, stale, rejected, and ratification-suggested claims. |
+| `memory_audit` | Preview or run a sampled audit; record an external outcome. Conflicts are never auto-resolved. |
 
 The `project-memory` skill teaches the daily workflow. The
-`goldfish-onboarding` skill bootstraps a new project. `AGENTS.md` carries the
-short policy so it applies even when a skill is not loaded.
+`goldfish-onboarding` skill bootstraps a new project. The
+`goldfish-verification` skill covers verification, audit, and review.
+`AGENTS.md` carries the short policy so it applies even when a skill is not
+loaded.
 
 ## Onboarding a new project
 
@@ -148,9 +163,38 @@ Use `memory_list` to enumerate nodes and `memory_health` to find work:
 - orphaned nodes with no edges
 - low-confidence claims
 - verification and audit backlogs
+- suggested ratifications to `verified`
 - nodes whose ID slug no longer matches their title
 - overview presence and linkage
 - citation coverage
+
+Use the review and verification loop before relying on uncertain claims:
+
+```text
+memory_review
+memory_verify { "ids": ["decision/example"] }
+memory_audit { "mode": "candidates", "limit": 10 }
+memory_audit { "mode": "run", "limit": 10 }
+```
+
+`memory_verify` runs deterministic checks first: citation existence and content
+hashes, conflict edges, `derived_from` cycles, premise soundness, and scope
+sanity. It calls the semantic verifier only when the deterministic layer cannot
+settle the claim. Semantic verdicts are cached by an input hash, so re-running
+on unchanged evidence does not spend another model call.
+
+The semantic verifier may promote an inferred claim to `cited` or `derived`,
+mark it stale, dispute both sides of a conflict, archive malicious content, or
+queue it for human review. It never promotes to `verified`. It may attach a
+ratification suggestion, which appears in `memory_review` and `memory_health`.
+
+The plugin also registers the corresponding commands:
+
+```text
+/goldfish-review [scope]     show the review queue
+/goldfish-verify [target]    verify up to 5 claims
+/goldfish-audit [target]     sample and audit eligible claims
+```
 
 Precise changes use the `memory_admin` namespace through Code Mode:
 
@@ -200,7 +244,7 @@ npm run memory -- stats
 
 # Review and quality loop
 npm run memory -- review
-npm run memory -- confirm gotcha/example --as cited
+npm run memory -- confirm gotcha/example --as derived
 npm run memory -- reject gotcha/example --reason "Contradicted by the current worker code."
 npm run memory -- revalidate
 npm run memory -- audit --uniform 0.03 --risk 0.07
@@ -246,6 +290,8 @@ Rules:
 - `verified` requires human, test, or commit evidence.
 - `cited` requires at least one citation. Missing file citations downgrade the
   claim to `inferred`.
+- `derived` requires cited or verified premises linked with `derived_from`, and
+  cannot auto-inject until the verifier confirms the premises and graph.
 - `inferred` is accepted and queryable but cannot auto-inject until confirmed.
 - Secrets and instruction-like text are rejected.
 - Bodies are capped at 6,000 characters; store claims and sources, not code
@@ -255,12 +301,12 @@ Rules:
 
 ## Injection policy
 
-The default policy allows `verified` and `cited` claims to auto-inject. Strict
-scopes require stronger evidence:
+The default policy allows `verified`, `cited`, and confirmed `derived` claims to
+auto-inject. Strict scopes require stronger evidence:
 
 ```json
 {
-  "defaultAllowed": ["verified", "cited"],
+  "defaultAllowed": ["verified", "cited", "derived"],
   "strict": [
     { "pattern": "auth/**", "allowed": ["verified"] },
     { "pattern": "payments/**", "allowed": ["verified"] },
@@ -291,17 +337,34 @@ directory from `opencode.json(c)` with an object entry:
         "injectMaxCards": 5,
         "requireWritePermission": false,
         "policy": {
-          "defaultAllowed": ["verified", "cited"],
+          "defaultAllowed": ["verified", "cited", "derived"],
           "strict": [
             { "pattern": "auth/**", "allowed": ["verified"] },
             { "pattern": "payments/**", "allowed": ["verified"] }
           ]
+        },
+        "verification": {
+          "semantic": true,
+          "model": "provider/model",
+          "maxPerRun": 5
+        },
+        "audit": {
+          "maxPerRun": 10,
+          "uniformRate": 0.03,
+          "riskRate": 0.07
         }
       }
     }
   ]
 }
 ```
+
+`verification.model` (or the top-level `verificationModel`) is a
+`provider/model` reference. Leave it unset to use the session model. Set
+`verification.semantic: false` for deterministic checks only. The audit rates
+default to the 3% uniform / 7% risk-weighted sample. A claim audited within the
+last 30 days at the same version is skipped until it changes or the cooldown
+expires.
 
 `requireWritePermission: true` routes `memory_remember` through
 `ctx.permission.assert` with action `memory.remember`. The default is `false`
@@ -368,8 +431,8 @@ The core has no OpenCode imports. The plugin is an adapter over the same
 
 - No embeddings or vector search yet. FTS5, aliases, tags, scope, and graph
   expansion come first; add vectors only if evaluation shows lexical misses.
-- Verification, audit recording, and repair are manual CLI operations. The
-  rejection-leaning verifier and background audit/repair workers are next.
+- Verification and audit are command-first. Background audit/repair workers and
+  automated repair tiers are not implemented.
 - Structural adapters for the repository map, docs, Git/PR metadata, and session
   metadata are not implemented. Seed via JSONL or let agents write claims.
 - Import merges the current node state and preserves citations and edges, but it
@@ -384,17 +447,21 @@ npm test
 npm run seed
 ```
 
-The 53 tests cover policy and glob matching, recall filters and budgets,
-material revisions and supersession, multi-conflict forks, audit sampling and
-outcomes, export/import round-trips, observe/edit operations, plugin tool
-registration, auto-recall and fallback hooks, skill and command registration,
-onboarding status, and CLI end-to-end and error paths.
+The 61 tests cover policy and glob matching, recall filters and budgets,
+material revisions and supersession, multi-conflict forks, evidence packets,
+citation freshness, derived cycles and premise soundness, verifier verdicts
+and caching, audit sampling and outcomes, export/import round-trips,
+observe/edit operations, plugin tool registration, auto-recall and fallback
+hooks, skill and command registration, onboarding status, and CLI end-to-end
+and error paths.
 
 ## Safety
 
 - Memory is data, not instructions. Recalled content is wrapped and labeled.
 - Secrets and instruction-like text are rejected on write.
-- File citations carry content hashes; `revalidate` marks changed citations
-  stale and removes them from auto-injection.
+- File citations carry content hashes; `revalidate` and `memory_verify` mark
+  changed citations stale and remove them from auto-injection.
 - Strict scopes require verified evidence.
+- Conflicts mark both sides disputed and are never auto-resolved.
+- Semantic verification is rejection-leaning and cannot promote to `verified`.
 - The plugin never bypasses normal edit, shell, or test permissions.

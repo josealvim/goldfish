@@ -4,9 +4,11 @@ import {
   type AuditCandidate,
   type AuditInfo,
   type AuditRecordInput,
+  type ApplyVerificationInput,
   type Author,
   type Basis,
   type Citation,
+  type CitationCheck,
   type CitationInput,
   type Edge,
   type EdgeType,
@@ -412,9 +414,16 @@ export class MemoryStore {
     proposal: MemoryProposal,
     citations: ResolvedCitation[],
     author: Author,
+    hasDerivedPremises = false,
   ): Basis {
-    const requested = proposal.basis ?? (citations.length ? "cited" : "inferred");
+    const requested =
+      proposal.basis ?? (citations.length ? "cited" : hasDerivedPremises ? "derived" : "inferred");
     if (requested === "inferred") return "inferred";
+    if (requested === "derived") {
+      if (citations.some((citation) => citation.validation === "missing")) return "inferred";
+      if (!citations.length && !hasDerivedPremises) return "inferred";
+      return "derived";
+    }
     if (!citations.length) return "inferred";
     if (citations.some((citation) => citation.validation === "missing")) return "inferred";
     if (requested === "verified") {
@@ -432,6 +441,7 @@ export class MemoryStore {
   private defaultConfidence(basis: Basis): number {
     if (basis === "verified") return 0.9;
     if (basis === "cited") return 0.7;
+    if (basis === "derived") return 0.6;
     return 0.4;
   }
 
@@ -624,7 +634,10 @@ export class MemoryStore {
     const now = context.now ?? this.now();
     const author = context.author;
     const citations = this.resolveCitations(proposal.citations ?? []);
-    const basis = this.effectiveBasis(proposal, citations, author);
+    const hasDerivedPremises = (proposal.links ?? []).some(
+      (link) => link.type === "derived_from" && Boolean(this.getRow(link.to)),
+    );
+    const basis = this.effectiveBasis(proposal, citations, author, hasDerivedPremises);
     const scope = uniqueStrings(proposal.scope);
     const tags = uniqueStrings(proposal.tags);
     const confidence = clamp(proposal.confidence ?? this.defaultConfidence(basis), 0, 1);
@@ -665,7 +678,11 @@ export class MemoryStore {
             basis: strongerBasis(existing.basis, basis),
             confidence: Math.max(existing.confidence, confidence),
             verificationState:
-              existing.basis === "inferred" && basis !== "inferred" ? "not_required" : existing.verificationState,
+              basis === "derived"
+                ? "unverified"
+                : existing.basis === "inferred" && basis !== "inferred"
+                  ? "not_required"
+                  : existing.verificationState,
             lastConfirmedAt:
               basis === "verified" || basis === "cited" ? now : existing.lastConfirmedAt,
             updatedAt: now,
@@ -694,7 +711,8 @@ export class MemoryStore {
         isFork || (existing.status === "disputed" && proposal.metadata?.resolveDispute !== true)
           ? "disputed"
           : "active";
-      const nextVerification: VerificationState = basis === "inferred" ? "unverified" : "not_required";
+      const nextVerification: VerificationState =
+        basis === "inferred" || basis === "derived" ? "unverified" : "not_required";
       const revised = this.recomputeEligibility(
         {
           ...existing,
@@ -737,7 +755,8 @@ export class MemoryStore {
       ? this.allocateForkID(proposal.kind, title, forkKey)
       : this.allocateNodeID(proposal.kind, title, baseCanonical);
     const canonical = isFork ? `${baseCanonical}#alt:${forkKey}` : baseCanonical;
-    const verificationState: VerificationState = basis === "inferred" ? "unverified" : "not_required";
+    const verificationState: VerificationState =
+      basis === "inferred" || basis === "derived" ? "unverified" : "not_required";
     const status: NodeStatus = contradictionTargets.length ? "disputed" : "active";
     const node: MemoryNode = this.recomputeEligibility(
       {
@@ -1024,6 +1043,29 @@ export class MemoryStore {
     return { node: root, neighbors };
   }
 
+  citationChecks(id: string): CitationCheck[] {
+    const row = this.getRow(id);
+    if (!row) return [];
+    const node = this.rowToNode(row);
+    return this.getCitations(node.id, node.version).map((citation) => {
+      if (citation.type !== "file") {
+        return { nodeID: node.id, citation, status: "unchecked" as const };
+      }
+      const absolute = path.isAbsolute(citation.locator)
+        ? citation.locator
+        : path.resolve(this.projectRoot, citation.locator);
+      try {
+        const content = readFileSync(absolute);
+        if (citation.contentHash && sha256(content) !== citation.contentHash) {
+          return { nodeID: node.id, citation, status: "changed" as const };
+        }
+        return { nodeID: node.id, citation, status: "ok" as const };
+      } catch {
+        return { nodeID: node.id, citation, status: "missing" as const };
+      }
+    });
+  }
+
   cite(id: string, citations: CitationInput[], context: WriteContext): MemoryNode {
     return transaction(this.db, () => {
       const row = this.getRow(id);
@@ -1166,7 +1208,7 @@ export class MemoryStore {
     });
   }
 
-  confirm(id: string, input: { as?: "cited" | "verified"; author: Author; reason?: string }): MemoryNode | undefined {
+  confirm(id: string, input: { as?: "cited" | "derived" | "verified"; author: Author; reason?: string }): MemoryNode | undefined {
     return transaction(this.db, () => {
       const row = this.getRow(id);
       if (!row) return undefined;
@@ -1177,6 +1219,8 @@ export class MemoryStore {
           ? "verified"
           : input.as ?? (citations.length ? "cited" : "verified");
       const now = this.now();
+      const metadata = { ...current.metadata };
+      delete metadata.ratificationSuggested;
       const next: MemoryNode = this.recomputeEligibility({
         ...current,
         basis: nextBasis,
@@ -1188,6 +1232,7 @@ export class MemoryStore {
         lastConfirmedAt: now,
         materialRevisionAt: now,
         author: input.author,
+        metadata,
       });
       this.updateNodeRow(next);
       this.insertVersion(next, input.reason ?? "confirmed", []);
@@ -1293,25 +1338,29 @@ export class MemoryStore {
 
   review(): ReviewItem[] {
     const rows = this.db
-      .prepare(
-        `SELECT * FROM nodes
-         WHERE verification_state IN ('unverified', 'queued', 'needs_human', 'rejected')
-            OR status IN ('disputed', 'stale')
-         ORDER BY updated_at DESC
-         LIMIT 100`,
-      )
+      .prepare("SELECT * FROM nodes ORDER BY updated_at DESC LIMIT 1000")
       .all();
-    return rows.map((row) => {
-      const node = this.rowToNode(row);
-      const reasons: string[] = [];
-      if (node.verificationState === "unverified") reasons.push("inferred claim awaiting verification");
-      if (node.verificationState === "queued") reasons.push("verification queued");
-      if (node.verificationState === "needs_human") reasons.push("needs human review");
-      if (node.verificationState === "rejected") reasons.push("previous verification rejected");
-      if (node.status === "disputed") reasons.push("disputed");
-      if (node.status === "stale") reasons.push("stale citation");
-      return { node, reasons };
-    });
+    return rows
+      .map((row) => {
+        const node = this.rowToNode(row);
+        const reasons: string[] = [];
+        if (node.verificationState === "unverified") {
+          reasons.push(
+            node.basis === "derived"
+              ? "derived claim awaiting verification"
+              : "inferred claim awaiting verification",
+          );
+        }
+        if (node.verificationState === "queued") reasons.push("verification queued");
+        if (node.verificationState === "needs_human") reasons.push("needs human review");
+        if (node.verificationState === "rejected") reasons.push("previous verification rejected");
+        if (node.metadata.ratificationSuggested) reasons.push("verified ratification suggested");
+        if (node.status === "disputed") reasons.push("disputed");
+        if (node.status === "stale") reasons.push("stale citation");
+        return { node, reasons };
+      })
+      .filter((item) => item.reasons.length > 0)
+      .slice(0, 100);
   }
 
   stats(): MemoryStats {
@@ -1451,6 +1500,12 @@ export class MemoryStore {
         node.status !== "superseded" &&
         node.id !== baseNodeId(node.kind, node.title),
     );
+    const ratificationNodes = all.filter(
+      (node) =>
+        Boolean(node.metadata.ratificationSuggested) &&
+        node.status !== "archived" &&
+        node.status !== "superseded",
+    );
 
     const overviewNode = this.get("concept/project-overview")?.node;
     const overviewPresent = Boolean(
@@ -1488,6 +1543,7 @@ export class MemoryStore {
         verificationBacklog: verificationBacklogNodes.length,
         auditBacklog: auditBacklogNodes.length,
         renamedIds: renamedNodes.length,
+        ratificationSuggested: ratificationNodes.length,
       },
       uncited: issueList(uncitedNodes, () => ["no citations"]),
       stale: issueList(staleNodes, () => ["status stale"]),
@@ -1503,7 +1559,106 @@ export class MemoryStore {
       renamedIds: issueList(renamedNodes, (node) => [
         `ID ${node.id} does not match title slug ${baseNodeId(node.kind, node.title)}`,
       ]),
+      ratificationSuggested: issueList(ratificationNodes, () => [
+        "model suggests ratification to verified",
+      ]),
     };
+  }
+
+  verificationCandidates(options: { scope?: string; limit?: number } = {}): MemoryNode[] {
+    const limit = clamp(Math.floor(options.limit ?? 10), 1, 100);
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM nodes
+         WHERE status IN ('active', 'stale')
+           AND verification_state IN ('unverified', 'queued', 'needs_human')
+         ORDER BY updated_at DESC`,
+      )
+      .all();
+    return rows
+      .map((row) => this.rowToNode(row))
+      .filter(
+        (node) =>
+          !options.scope ||
+          !node.scope.length ||
+          anyScopeMatches(node.scope, [options.scope]),
+      )
+      .slice(0, limit);
+  }
+
+  applyVerification(id: string, input: ApplyVerificationInput): MemoryNode {
+    return transaction(this.db, () => {
+      const row = this.getRow(id);
+      if (!row) throw new Error(`No memory node found for ${id}`);
+      const current = this.rowToNode(row);
+      const now = this.now();
+      const next: MemoryNode = this.recomputeEligibility({
+        ...current,
+        ...(input.basis !== undefined ? { basis: input.basis } : {}),
+        ...(input.verificationState !== undefined
+          ? { verificationState: input.verificationState }
+          : {}),
+        ...(input.status !== undefined ? { status: input.status } : {}),
+        ...(input.confidence !== undefined ? { confidence: clamp(input.confidence, 0, 1) } : {}),
+        ...(input.lastConfirmedAt !== undefined
+          ? { lastConfirmedAt: input.lastConfirmedAt }
+          : {}),
+        ...(input.metadata ? { metadata: { ...current.metadata, ...input.metadata } } : {}),
+        updatedAt: now,
+      });
+      this.updateNodeRow(next);
+      this.db
+        .prepare(
+          `INSERT INTO audits
+            (node_id, node_version, trigger, sampled_by, risk_score, auditor_json,
+             outcome, findings_json, created_at)
+           VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          next.id,
+          current.version,
+          input.audit.trigger,
+          input.audit.sampledBy ?? "verification",
+          input.audit.riskScore ?? 0,
+          JSON.stringify(input.audit.auditor ?? {}),
+          input.audit.outcome,
+          JSON.stringify(input.audit.findings ?? {}),
+          now,
+        );
+
+      for (const conflictID of new Set(input.conflictIDs ?? [])) {
+        if (conflictID === id) continue;
+        const otherRow = this.getRow(conflictID);
+        if (!otherRow) continue;
+        const other = this.rowToNode(otherRow);
+        if (other.status === "archived") continue;
+        this.updateNodeRow({
+          ...other,
+          status: "disputed",
+          autoInjectEligible: false,
+          updatedAt: now,
+        });
+        this.db
+          .prepare(
+            `INSERT INTO edges(from_id, to_id, type, weight, metadata_json, created_at)
+             VALUES(?, ?, 'contradicts', 1, '{}', ?)
+             ON CONFLICT(from_id, to_id, type) DO UPDATE SET retired_at = NULL`,
+          )
+          .run(next.id, conflictID, now);
+        this.recordEvent(input.author, "dispute", next.id, {
+          target: conflictID,
+          reason: input.reason,
+        });
+      }
+
+      this.recordEvent(
+        input.author,
+        input.audit.trigger === "verification" ? "verify" : "audit",
+        next.id,
+        { outcome: input.audit.outcome, reason: input.reason },
+      );
+      return next;
+    });
   }
 
   auditCandidates(options: { uniformRate?: number; riskRate?: number; max?: number } = {}): AuditCandidate[] {
@@ -1517,6 +1672,10 @@ export class MemoryStore {
     for (const row of this.db.prepare("SELECT node_id, COUNT(*) AS count FROM injections GROUP BY node_id").all()) {
       injectionCounts.set(String(row.node_id), Number(row.count));
     }
+    const lastAudit = this.db.prepare(
+      "SELECT node_version, created_at FROM audits WHERE node_id = ? ORDER BY created_at DESC, id DESC LIMIT 1",
+    );
+    const auditCutoff = new Date(Date.now() - 30 * 86_400_000).toISOString();
 
     const candidates = rows.map((row) => {
       const node = this.rowToNode(row);
@@ -1553,6 +1712,11 @@ export class MemoryStore {
         reasons.push("strict scope");
       }
       return { node, uniform, risk: clamp(risk, 0, 1), reasons };
+    }).filter((candidate) => {
+      const audit = lastAudit.get(candidate.node.id);
+      if (!audit) return true;
+      const sameVersion = Number(audit.node_version) >= candidate.node.version;
+      return !(sameVersion && String(audit.created_at) >= auditCutoff);
     });
 
     const selected = new Map<string, AuditCandidate>();

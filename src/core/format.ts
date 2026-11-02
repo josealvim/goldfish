@@ -1,4 +1,5 @@
 import type {
+  AuditCandidate,
   Citation,
   MemoryCard,
   MemoryDetail,
@@ -24,6 +25,7 @@ function citationLabel(citation: Citation): string {
 function basisLabel(card: Pick<MemoryCard, "basis" | "verificationState">): string {
   if (card.basis === "inferred" && card.verificationState === "rejected") return "inferred, rejected";
   if (card.basis === "inferred") return "inferred, unverified";
+  if (card.basis === "derived" && card.verificationState !== "confirmed") return "derived, unverified";
   if (card.verificationState === "needs_human") return `${card.basis}, needs review`;
   return card.basis;
 }
@@ -165,6 +167,20 @@ export function formatReview(items: ReviewItem[]): string {
   return lines.join("\n");
 }
 
+export function formatAuditCandidates(candidates: AuditCandidate[]): string {
+  if (!candidates.length) return "No audit candidates were sampled for this run.";
+  const lines = [`# Audit candidates (${candidates.length})`, ""];
+  for (const candidate of candidates) {
+    lines.push(
+      `- ${candidate.node.id}`,
+      `  [${candidate.node.kind} · ${candidate.node.basis} · ${candidate.node.status}] ${candidate.node.title}`,
+      `  Trigger: ${candidate.trigger} · risk ${candidate.riskScore.toFixed(2)}`,
+      `  Reasons: ${candidate.reasons.join("; ") || "sample"}`,
+    );
+  }
+  return lines.join("\n");
+}
+
 function countSection(label: string, values: Record<string, number>): string {
   return `${label}: ${Object.entries(values)
     .sort(([left], [right]) => left.localeCompare(right))
@@ -244,6 +260,11 @@ export function formatMemoryHealth(health: MemoryHealth): string {
     ...healthIssueSection("Verification backlog", health.verificationBacklog, health.counts.verificationBacklog),
     ...healthIssueSection("Audit backlog", health.auditBacklog, health.counts.auditBacklog),
     ...healthIssueSection("Renamed IDs", health.renamedIds, health.counts.renamedIds),
+    ...healthIssueSection(
+      "Ratification suggested",
+      health.ratificationSuggested,
+      health.counts.ratificationSuggested,
+    ),
   ];
   return lines.join("\n");
 }

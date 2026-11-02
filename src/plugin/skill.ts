@@ -20,6 +20,10 @@ export const ONBOARDING_SKILL_PATH = fileURLToPath(
   new URL("../../.opencode/skills/goldfish-onboarding/SKILL.md", import.meta.url),
 );
 
+export const VERIFICATION_SKILL_PATH = fileURLToPath(
+  new URL("../../.opencode/skills/goldfish-verification/SKILL.md", import.meta.url),
+);
+
 export const FALLBACK_CONTENT = `# Project memory
 
 This project has a local knowledge base exposed through the \`memory\` tools.
@@ -28,6 +32,8 @@ This project has a local knowledge base exposed through the \`memory\` tools.
   recommended, suggest \`/goldfish-onboard\`.
 - Use \`memory_health\` and \`memory_list\` for maintenance; use the
   \`memory_admin\` namespace for precise cite/link/unlink/update/archive changes.
+- Use \`memory_review\`, \`memory_verify\`, and \`memory_audit\` before relying on
+  unverified, disputed, or stale claims.
 - Before planning unfamiliar work, call \`memory_recall\` with domain terms and the
   paths you expect to touch.
 - Read the evidence cards, then call \`memory_get\` for a full claim or
@@ -52,7 +58,8 @@ If memory is empty and the user did not ask to onboard, suggest
 \`/goldfish-onboard\` and write nothing. If the user asks to get oriented, you may
 write the single cited \`concept/project-overview\` node, then ask before
 continuing. If the user invoked \`/goldfish-onboard\` or explicitly asked to
-onboard, run the bounded first pass.
+onboard, run the bounded first pass. Use \`derived\` only for a claim whose
+premises are already cited or verified and linked with \`derived_from\`.
 
 ## Workflow
 
@@ -76,6 +83,28 @@ exact files. Do not store code dumps, secrets, or transient state. Report what
 was stored, what is uncertain, and what should be confirmed next.
 `;
 
+const VERIFICATION_FALLBACK_CONTENT = `# Goldfish verification
+
+Use this when the user invokes \`/goldfish-verify\`, \`/goldfish-audit\`, or
+\`/goldfish-review\`, or before relying on an unverified, disputed, or stale
+claim.
+
+Call \`memory_review\` first, then \`memory_get\` for the claims that matter. Read
+the cited sources yourself. \`memory_verify\` runs deterministic checks and, when
+a model is configured, a rejection-leaning semantic verifier. It may promote an
+inferred claim to \`cited\` or \`derived\`, mark a claim stale, dispute both sides
+of a conflict, archive malicious content, or queue a claim for human review.
+
+It never makes a claim \`verified\`. Only a human, a reproducible test, or a
+commit can do that. A model may suggest ratification, which appears in the
+review queue.
+
+\`memory_audit\` samples auto-inject-eligible claims with 3% uniform plus 7%
+risk-weighted slots. Use \`mode=candidates\` to preview, \`mode=run\` to audit, and
+\`mode=record\` to record an external outcome. Conflicts leave both sides
+disputed and are never auto-resolved. Do not audit more than 10 claims per run.
+`;
+
 const PROJECT_MEMORY_SKILL: SkillSpec = {
   id: "project-memory",
   name: "Project Memory",
@@ -92,6 +121,15 @@ const ONBOARDING_SKILL: SkillSpec = {
     "Bootstrap goldfish project memory in a project that is new to goldfish or has empty memory. Use when the user asks to onboard, get oriented, or establish project memory. Do not use for routine recall. Check memory_status first; if memory already has an overview and components, only fill gaps.",
   path: ONBOARDING_SKILL_PATH,
   fallback: ONBOARDING_FALLBACK_CONTENT,
+};
+
+const VERIFICATION_SKILL: SkillSpec = {
+  id: "goldfish-verification",
+  name: "Goldfish Verification",
+  description:
+    "Verify, audit, and review goldfish project-memory claims. Use when the user invokes /goldfish-verify, /goldfish-audit, or /goldfish-review, when memory has unverified/disputed/stale claims, or before relying on a high-impact memory claim.",
+  path: VERIFICATION_SKILL_PATH,
+  fallback: VERIFICATION_FALLBACK_CONTENT,
 };
 
 function stripFrontmatter(value: string): string {
@@ -141,5 +179,5 @@ export async function registerSkill(ctx: PluginContext): Promise<Registration> {
 }
 
 export async function registerSkills(ctx: PluginContext): Promise<Registration> {
-  return registerSpecs(ctx, [PROJECT_MEMORY_SKILL, ONBOARDING_SKILL]);
+  return registerSpecs(ctx, [PROJECT_MEMORY_SKILL, ONBOARDING_SKILL, VERIFICATION_SKILL]);
 }

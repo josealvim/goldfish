@@ -257,8 +257,8 @@ async function main(): Promise<void> {
 
     case "confirm": {
       const id = args.positionals[0];
-      if (!id) throw new Error("Usage: memory confirm <id> [--as cited|verified]");
-      const as = flag(args, "as") as "cited" | "verified" | undefined;
+      if (!id) throw new Error("Usage: memory confirm <id> [--as cited|derived|verified]");
+      const as = flag(args, "as") as "cited" | "derived" | "verified" | undefined;
       await withStore(args, (store) => {
         const node = store.confirm(id, {
           as,
@@ -477,7 +477,7 @@ Commands:
   list                            List nodes with kind/status/scope/tag filters
   health                          Show memory quality diagnostics
   review                          Show unverified, disputed, and stale nodes
-  confirm <id> [--as cited|verified]
+  confirm <id> [--as cited|derived|verified]
   reject <id> --reason <text>
   revalidate                      Mark nodes with changed file citations stale
   audit                           List sampled audit candidates

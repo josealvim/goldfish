@@ -14,13 +14,18 @@ backup, or sharing. The SQLite file itself is never committed.
 
 ## Optimistic writes, earned injection
 
-Agents may write claims freely, but auto-injection is earned. `verified` and
-`cited` claims may be injected automatically in normal scopes. `inferred`
-claims are queryable through explicit recall but must be confirmed by a human
-or an independent, rejection-leaning verifier before they can be auto-injected.
+Agents may write claims freely, but auto-injection is earned. `verified`,
+`cited`, and confirmed `derived` claims may be injected automatically in normal
+scopes. `inferred` and unconfirmed `derived` claims are queryable through
+explicit recall but must be confirmed before they can be auto-injected.
 `disputed` and `stale` claims require explicit recall and are shown with a
 warning. This preserves broad contribution without letting every hypothesis
 enter the ambient context.
+
+The basis ladder is `inferred < derived < cited < verified`. A derived claim
+must have cited or verified premises linked with `derived_from`. The graph
+verifier checks premise soundness and rejects cycles before the claim is
+eligible for injection.
 
 ## Claims and entities are separate
 
@@ -34,10 +39,19 @@ flat list attached to an entity.
 ## Verification is independent and rejection-leaning
 
 Verification reads the cited sources rather than trusting the claim's own
-wording. The verifier defaults to reject, requires direct evidence, quotes the
-supporting text, and refuses circular citations. A confirmed inferred claim is
-promoted to `cited` when the evidence is a source, or `verified` when a human
-or reproducible test confirms it. A material revision resets verification.
+wording. It runs in layers. Deterministic checks cover citation existence and
+content hashes, conflict edges, `derived_from` cycles, premise soundness, and
+scope sanity. A semantic verifier runs only when deterministic checks pass but
+cannot decide support. The verifier defaults to reject, requires direct
+evidence, quotes the supporting text, and refuses circular citations.
+
+A confirmed inferred claim is promoted to `cited` when a source supports it, or
+`derived` when its premises are sound. The verifier never promotes to
+`verified`; only a human, reproducible test, or commit evidence can do that. The
+verifier may attach a ratification suggestion, which appears in the review
+queue and health report. Semantic verdicts are cached by an input hash that
+covers the claim version, citations, premises, conflicts, and citation
+freshness. A material revision resets verification.
 
 ## Audit sampling
 
@@ -48,12 +62,31 @@ injected claims, recent revisions, strict scopes, and prior disputes. Every
 write gets deterministic citation and content checks. Disputes, stale citations,
 and verification failures trigger audits directly.
 
+Auditing is command-first: `memory_audit` can preview candidates, run a
+bounded sample, or record an external outcome. The semantic model is called only
+for sampled or explicitly verified claims, never for every claim. A claim is
+skipped for 30 days after an audit of the same version, so repeated runs do not
+crowd out unaudited claims; a material revision resets the cooldown. Background
+audit and repair workers are deferred until the command-first loop has evidence
+that they are worth the cost and complexity.
+
+## Conflicts leave both sides disputed
+
+A conflict is evidence that at least one claim is wrong, not a vote. When two
+claims conflict, both are marked `disputed`, both lose auto-injection, and the
+`contradicts` edge is preserved. The system does not auto-resolve the conflict,
+auto-delete a side, or silently choose the newer claim. A human resolves it by
+adding evidence, revising one side with `supersedes`, or archiving the wrong
+claim. This prevents a confident verifier or a newer write from erasing a real
+disagreement.
+
 ## Per-scope strict mode
 
-The default policy allows `verified` and `cited` claims to auto-inject. Strict
-scopes such as `auth/**`, `payments/**`, `infra/prod/**`, and migrations require
-`verified` evidence or explicit recall. A strict scope may also raise its audit
-rate. If scope inference is uncertain, the stricter policy wins.
+The default policy allows `verified`, `cited`, and confirmed `derived` claims to
+auto-inject. Strict scopes such as `auth/**`, `payments/**`, `infra/prod/**`, and
+migrations require `verified` evidence or explicit recall. A strict scope may
+also raise its audit rate. If scope inference is uncertain, the stricter policy
+wins.
 
 ## Repair is versioned
 

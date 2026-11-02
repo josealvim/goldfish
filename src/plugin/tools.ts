@@ -1,6 +1,7 @@
 import type { Registration } from "@opencode/plugin/promise/registration";
 import type { ToolContext } from "@opencode/plugin/promise/tool";
 import {
+  formatAuditCandidates,
   formatMemoryHealth,
   formatMemoryList,
   formatMemoryStatus,
@@ -8,9 +9,17 @@ import {
   formatNode,
   formatRecall,
   formatRemember,
+  formatReview,
 } from "../core/format.ts";
+import {
+  applyVerificationVerdict,
+  buildVerificationPacket,
+  findCachedVerification,
+  verificationInputHash,
+} from "../core/verification.ts";
 import { BASES, EDGE_TYPES, NODE_KINDS, NODE_STATUSES, SOURCE_TYPES } from "../core/types.ts";
 import type {
+  AuditRecordInput,
   Basis,
   CitationInput,
   EdgeType,
@@ -88,6 +97,27 @@ interface UpdateInput {
 interface ArchiveInput {
   id: string;
   reason: string;
+}
+
+interface VerifyInput {
+  ids?: string[];
+  scope?: string;
+  limit?: number;
+}
+
+interface ReviewInput {
+  limit?: number;
+}
+
+interface AuditInput {
+  mode: "candidates" | "run" | "record";
+  limit?: number;
+  uniformRate?: number;
+  riskRate?: number;
+  id?: string;
+  outcome?: AuditRecordInput["outcome"];
+  trigger?: AuditRecordInput["trigger"];
+  reason?: string;
 }
 
 const recallSchema = {
@@ -185,9 +215,9 @@ const rememberSchema = {
     },
     basis: {
       type: "string",
-      enum: ["verified", "cited", "inferred"],
+      enum: ["verified", "cited", "derived", "inferred"],
       description:
-        "verified requires human/test/commit evidence; cited requires a valid source; inferred is unverified.",
+        "verified requires human/test/commit evidence; cited requires a valid source; derived requires verified/cited premises linked with derived_from; inferred is unverified.",
     },
     confidence: { type: "number", minimum: 0, maximum: 1 },
     supersedes: {
@@ -310,6 +340,56 @@ const archiveSchema = {
     reason: { type: "string" },
   },
   required: ["id", "reason"],
+  additionalProperties: false,
+} as const;
+
+const verifySchema = {
+  type: "object",
+  properties: {
+    ids: { type: "array", items: { type: "string" } },
+    scope: { type: "string" },
+    limit: { type: "integer", minimum: 1, maximum: 20 },
+  },
+  additionalProperties: false,
+} as const;
+
+const reviewSchema = {
+  type: "object",
+  properties: {
+    limit: { type: "integer", minimum: 1, maximum: 100 },
+  },
+  additionalProperties: false,
+} as const;
+
+const auditSchema = {
+  type: "object",
+  properties: {
+    mode: { type: "string", enum: ["candidates", "run", "record"] },
+    limit: { type: "integer", minimum: 1, maximum: 100 },
+    uniformRate: { type: "number", minimum: 0, maximum: 1 },
+    riskRate: { type: "number", minimum: 0, maximum: 1 },
+    id: { type: "string", description: "Node ID for mode=record." },
+    outcome: {
+      type: "string",
+      enum: [
+        "supported",
+        "partially_supported",
+        "contradicted",
+        "insufficient",
+        "stale",
+        "malicious",
+        "confirmed",
+        "rejected",
+        "needs_human",
+      ],
+    },
+    trigger: {
+      type: "string",
+      enum: ["uniform", "risk", "dispute", "stale", "verification", "manual"],
+    },
+    reason: { type: "string" },
+  },
+  required: ["mode"],
   additionalProperties: false,
 } as const;
 
@@ -509,9 +589,291 @@ export async function registerTools(ctx: PluginContext, runtime: Runtime): Promi
       },
     });
 
+    editor.add({
+      name: "verify",
+      description:
+        "Verify inferred or unverified claims. Runs deterministic checks, then a rejection-leaning semantic " +
+        "verifier when a model is configured. May promote to cited/derived, queue for human review, mark stale, " +
+        "or flag conflicts. It never promotes to verified; it may suggest ratification.",
+      input: verifySchema,
+      options: { namespace: "memory", codemode: false },
+      execute: async (raw, context) => {
+        const input = (raw ?? {}) as VerifyInput;
+        const limit = Math.max(
+          1,
+          Math.min(input.limit ?? runtime.verificationMaxPerRun, runtime.verificationMaxPerRun),
+        );
+        const nodes = input.ids?.length
+          ? input.ids.flatMap((id) => {
+              const detail = runtime.store.get(id);
+              return detail ? [detail.node] : [];
+            })
+          : runtime.store.verificationCandidates({ scope: input.scope, limit });
+        const selected = nodes.slice(0, limit);
+        if (selected.length) {
+          await assertWrite(
+            ctx,
+            runtime,
+            context,
+            "memory.verify",
+            selected.map((node) => node.id),
+          );
+        }
+        const results: Array<Record<string, unknown>> = [];
+        const author = writeContext(context).author;
+        const cacheSalt = runtime.verificationModel ?? "session";
+
+        for (const node of selected) {
+          const packet = buildVerificationPacket(runtime.store, node.id);
+          if (!packet) continue;
+          const inputHash = verificationInputHash(packet, cacheSalt);
+          if (runtime.verificationSemantic && !packet.deterministic.stale) {
+            const cached = findCachedVerification(packet, inputHash);
+            if (cached) {
+              const findings = cached.findings ?? {};
+              results.push({
+                id: node.id,
+                verdict: findings.verdict ?? cached.outcome,
+                action: findings.suggestedAction ?? "cached",
+                basis: node.basis,
+                status: node.status,
+                reason: findings.reason ?? "Cached verification result.",
+                cached: true,
+              });
+              continue;
+            }
+          }
+
+          const verdict = await runtime.verifier.verify(packet);
+          if (verdict.verdict === "needs_model") {
+            results.push({
+              id: node.id,
+              verdict: verdict.verdict,
+              action: verdict.suggestedAction,
+              basis: node.basis,
+              status: node.status,
+              reason: verdict.reason,
+              applied: false,
+            });
+            continue;
+          }
+          const applied = applyVerificationVerdict(runtime.store, packet, verdict, {
+            author,
+            trigger: "verification",
+            sampledBy: "memory_verify",
+            auditor: { tool: "memory_verify" },
+            cacheSalt,
+          });
+          results.push({
+            id: node.id,
+            verdict: verdict.verdict,
+            action: verdict.suggestedAction,
+            basis: applied.basis,
+            status: applied.status,
+            reason: verdict.reason,
+            applied: true,
+          });
+        }
+
+        if (!results.length) {
+          return {
+            content:
+              "No verification candidates matched. Use memory_audit for auto-inject-eligible claims " +
+              "or pass explicit IDs.",
+            metadata: { checked: 0, results: [] },
+          };
+        }
+        const lines = [`Verification run: ${results.length} candidate(s)`, ""];
+        for (const result of results) {
+          const suffix = result.cached
+            ? " (cached)"
+            : result.applied === false
+              ? " (not applied)"
+              : "";
+          lines.push(
+            `- ${String(result.id)}: ${String(result.verdict)} → ${String(result.basis)}/${String(result.status)}` +
+              `${suffix} — ${String(result.reason)}`,
+          );
+        }
+        return {
+          content: lines.join("\n"),
+          metadata: { checked: results.length, results },
+        };
+      },
+    });
+
+    editor.add({
+      name: "review",
+      description:
+        "Show the memory review queue: inferred/derived claims awaiting verification, needs-human items, " +
+        "disputed or stale claims, rejected nodes, and suggested verified ratifications. Read-only.",
+      input: reviewSchema,
+      options: { namespace: "memory", codemode: false },
+      execute: async (raw) => {
+        const input = (raw ?? {}) as ReviewInput;
+        const items = runtime.store.review().slice(0, input.limit ?? 50);
+        return {
+          content: formatReview(items),
+          metadata: { count: items.length, ids: items.map((item) => item.node.id) },
+        };
+      },
+    });
+
+    editor.add({
+      name: "audit",
+      description:
+        "Sample auto-inject-eligible claims for audit, run deterministic plus semantic checks, or record an " +
+        "external audit outcome. Sampling uses a uniform rate plus risk-weighted slots. Audits can mark claims " +
+        "stale, disputed, archived, or needs-human; they never automatically resolve a conflict.",
+      input: auditSchema,
+      options: { namespace: "memory", codemode: false },
+      execute: async (raw, context) => {
+        const input = (raw ?? {}) as AuditInput;
+        if (input.mode === "record") {
+          if (!input.id || !input.outcome) {
+            throw new Error("mode=record requires id and outcome");
+          }
+          await assertWrite(ctx, runtime, context, "memory.audit", [input.id]);
+          const detail = runtime.store.get(input.id);
+          if (!detail) throw new Error(`No memory node found for ${input.id}`);
+          runtime.store.recordAudit({
+            nodeID: detail.node.id,
+            version: detail.node.version,
+            trigger: input.trigger ?? "manual",
+            outcome: input.outcome,
+            sampledBy: "memory_audit",
+            riskScore: 0,
+            auditor: { tool: "memory_audit" },
+            findings: { reason: input.reason ?? "" },
+          });
+          const updated = runtime.store.get(input.id)?.node;
+          return {
+            content: `Recorded ${input.outcome} audit for ${input.id}.`,
+            metadata: {
+              nodeID: input.id,
+              outcome: input.outcome,
+              status: updated?.status,
+              verificationState: updated?.verificationState,
+            },
+          };
+        }
+
+        const limit = Math.max(
+          1,
+          Math.min(input.limit ?? runtime.auditMaxPerRun, runtime.auditMaxPerRun),
+        );
+        const candidates = runtime.store.auditCandidates({
+          uniformRate: input.uniformRate ?? runtime.auditUniformRate,
+          riskRate: input.riskRate ?? runtime.auditRiskRate,
+          max: limit,
+        });
+        if (input.mode === "candidates") {
+          return {
+            content: formatAuditCandidates(candidates),
+            metadata: {
+              count: candidates.length,
+              ids: candidates.map((candidate) => candidate.node.id),
+            },
+          };
+        }
+        if (!candidates.length) {
+          return {
+            content: "No audit candidates were sampled for this run.",
+            metadata: { checked: 0, results: [] },
+          };
+        }
+
+        await assertWrite(
+          ctx,
+          runtime,
+          context,
+          "memory.audit",
+          candidates.map((candidate) => candidate.node.id),
+        );
+        const author = writeContext(context).author;
+        const cacheSalt = runtime.verificationModel ?? "session";
+        const results: Array<Record<string, unknown>> = [];
+        for (const candidate of candidates) {
+          const packet = buildVerificationPacket(runtime.store, candidate.node.id);
+          if (!packet) continue;
+          const inputHash = verificationInputHash(packet, cacheSalt);
+          if (runtime.verificationSemantic && !packet.deterministic.stale) {
+            const cached = findCachedVerification(packet, inputHash);
+            if (cached) {
+              const findings = cached.findings ?? {};
+              results.push({
+                id: candidate.node.id,
+                trigger: candidate.trigger,
+                riskScore: candidate.riskScore,
+                verdict: findings.verdict ?? cached.outcome,
+                action: findings.suggestedAction ?? "cached",
+                basis: candidate.node.basis,
+                status: candidate.node.status,
+                reason: findings.reason ?? "Cached audit result.",
+                cached: true,
+              });
+              continue;
+            }
+          }
+
+          const verdict = await runtime.verifier.verify(packet);
+          if (verdict.verdict === "needs_model") {
+            results.push({
+              id: candidate.node.id,
+              trigger: candidate.trigger,
+              riskScore: candidate.riskScore,
+              verdict: verdict.verdict,
+              action: verdict.suggestedAction,
+              basis: candidate.node.basis,
+              status: candidate.node.status,
+              reason: verdict.reason,
+              applied: false,
+            });
+            continue;
+          }
+          const applied = applyVerificationVerdict(runtime.store, packet, verdict, {
+            author,
+            trigger: candidate.trigger,
+            sampledBy: "memory_audit",
+            riskScore: candidate.riskScore,
+            auditor: { tool: "memory_audit", reasons: candidate.reasons },
+            cacheSalt,
+          });
+          results.push({
+            id: candidate.node.id,
+            trigger: candidate.trigger,
+            riskScore: candidate.riskScore,
+            verdict: verdict.verdict,
+            action: verdict.suggestedAction,
+            basis: applied.basis,
+            status: applied.status,
+            reason: verdict.reason,
+            applied: true,
+          });
+        }
+
+        const lines = [`Audit run: ${results.length} candidate(s)`, ""];
+        for (const result of results) {
+          const suffix = result.cached
+            ? " (cached)"
+            : result.applied === false
+              ? " (not applied)"
+              : "";
+          lines.push(
+            `- ${String(result.id)}: ${String(result.trigger)} ${String(result.verdict)} → ` +
+              `${String(result.basis)}/${String(result.status)}${suffix} — ${String(result.reason)}`,
+          );
+        }
+        return {
+          content: lines.join("\n"),
+          metadata: { checked: results.length, results },
+        };
+      },
+    });
+
     editor.namespace({
       name: "memory_admin",
-      description: "Precise memory maintenance: cite, link, unlink, update, and archive nodes.",
+      description: "Precise memory maintenance: cite, link, unlink, update, archive, and audit.",
     });
 
     editor.add({

@@ -29,7 +29,7 @@ export const EDGE_TYPES = [
 
 export type EdgeType = (typeof EDGE_TYPES)[number];
 
-export const BASES = ["verified", "cited", "inferred"] as const;
+export const BASES = ["verified", "cited", "derived", "inferred"] as const;
 export type Basis = (typeof BASES)[number];
 
 export const NODE_STATUSES = ["active", "disputed", "stale", "superseded", "archived"] as const;
@@ -77,6 +77,12 @@ export interface Citation extends CitationInput {
   excerptHash?: string;
   observedAt: string;
   validation: "ok" | "missing" | "unchecked";
+}
+
+export interface CitationCheck {
+  nodeID: string;
+  citation: Citation;
+  status: "ok" | "missing" | "changed" | "unchecked";
 }
 
 export interface MemoryNode {
@@ -313,6 +319,7 @@ export interface MemoryHealth {
     verificationBacklog: number;
     auditBacklog: number;
     renamedIds: number;
+    ratificationSuggested: number;
   };
   uncited: HealthIssue[];
   stale: HealthIssue[];
@@ -322,6 +329,29 @@ export interface MemoryHealth {
   verificationBacklog: HealthIssue[];
   auditBacklog: HealthIssue[];
   renamedIds: HealthIssue[];
+  ratificationSuggested: HealthIssue[];
+}
+
+export interface VerificationAuditInput {
+  trigger: "verification" | "uniform" | "risk" | "dispute" | "stale" | "manual";
+  outcome: AuditRecordInput["outcome"];
+  sampledBy?: string;
+  riskScore?: number;
+  auditor?: Record<string, unknown>;
+  findings?: Record<string, unknown>;
+}
+
+export interface ApplyVerificationInput {
+  basis?: Basis;
+  verificationState?: VerificationState;
+  status?: NodeStatus;
+  confidence?: number;
+  lastConfirmedAt?: string;
+  metadata?: Record<string, unknown>;
+  audit: VerificationAuditInput;
+  conflictIDs?: string[];
+  author: Author;
+  reason: string;
 }
 
 export interface MemoryStats {

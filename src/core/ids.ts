@@ -55,7 +55,7 @@ export function isMaterialChange(
   return prev !== nextKeys;
 }
 
-export function strongerBasis(a: "verified" | "cited" | "inferred", b: "verified" | "cited" | "inferred") {
-  const rank = { verified: 3, cited: 2, inferred: 1 } as const;
+export function strongerBasis(a: "verified" | "cited" | "derived" | "inferred", b: "verified" | "cited" | "derived" | "inferred") {
+  const rank = { verified: 4, cited: 3, derived: 2, inferred: 1 } as const;
   return rank[a] >= rank[b] ? a : b;
 }

@@ -22,6 +22,7 @@ interface Fake {
   skills: any[];
   commands: any[];
   prompts: any[];
+  generated: any[];
   disposals: number;
 }
 
@@ -30,6 +31,7 @@ function makeFake(options: {
   dbPath: string;
   withInstructions?: boolean;
   requireWritePermission?: boolean;
+  verificationResponse?: string;
 }): Fake {
   const tools = new Map<string, any>();
   const promptHooks: Fake["promptHooks"] = [];
@@ -40,7 +42,19 @@ function makeFake(options: {
   const skills: any[] = [];
   const commands: any[] = [];
   const prompts: any[] = [];
+  const generated: any[] = [];
   let disposals = 0;
+  const verificationResponse =
+    options.verificationResponse ??
+    JSON.stringify({
+      verdict: "supported",
+      confidence: 0.8,
+      suggestedAction: "ratify_verified",
+      reason: "The cited source supports the claim.",
+      evidence: [],
+      premises: [],
+      conflicts: [],
+    });
   const registration = {
     dispose: async () => {
       disposals++;
@@ -111,6 +125,12 @@ function makeFake(options: {
         return registration;
       },
     },
+    generate: {
+      text: async (input: unknown) => {
+        generated.push(input);
+        return { text: verificationResponse };
+      },
+    },
   } as unknown as PluginContext;
 
   return {
@@ -124,6 +144,7 @@ function makeFake(options: {
     skills,
     commands,
     prompts,
+    generated,
     get disposals() {
       return disposals;
     },
@@ -132,7 +153,11 @@ function makeFake(options: {
 
 async function withPlugin(
   callback: (fake: Fake, runtime: Runtime) => Promise<void> | void,
-  options: { withInstructions?: boolean; requireWritePermission?: boolean } = {},
+  options: {
+    withInstructions?: boolean;
+    requireWritePermission?: boolean;
+    verificationResponse?: string;
+  } = {},
 ): Promise<void> {
   const root = mkdtempSync(path.join(tmpdir(), "goldfish-plugin-"));
   mkdirSync(path.join(root, "docs"), { recursive: true });
@@ -174,6 +199,7 @@ test("registers agent tools and executes recall/get", async () => {
     await registerTools(fake.ctx, runtime);
     assert.deepEqual([...fake.tools.keys()].sort(), [
       "archive",
+      "audit",
       "cite",
       "get",
       "health",
@@ -182,9 +208,11 @@ test("registers agent tools and executes recall/get", async () => {
       "neighbors",
       "recall",
       "remember",
+      "review",
       "status",
       "unlink",
       "update",
+      "verify",
     ]);
 
     const recall = fake.tools.get("recall")!;
@@ -194,6 +222,77 @@ test("registers agent tools and executes recall/get", async () => {
     const get = fake.tools.get("get")!;
     const detail = await get.execute({ id: created.node!.id }, toolContext);
     assert.match(String(detail.content), /## Sources/);
+  });
+});
+
+test("memory_verify applies a semantic verdict once and caches unchanged evidence", async () => {
+  await withPlugin(async (fake, runtime) => {
+    const created = runtime.store.remember(
+      {
+        kind: "gotcha",
+        title: "Unverified policy",
+        body: "This claim still needs a semantic check.",
+        basis: "inferred",
+        citations: [{ type: "file", locator: "docs/decisions.md" }],
+      },
+      { author: { type: "system", id: "test" } },
+    ).node!;
+    await registerTools(fake.ctx, runtime);
+
+    const verify = fake.tools.get("verify")!;
+    const first = await verify.execute({ ids: [created.id] }, toolContext);
+    const firstResults = (first.metadata as any).results;
+    assert.equal(firstResults[0].verdict, "supported");
+    assert.equal(firstResults[0].basis, "cited");
+    assert.equal(fake.generated.length, 1);
+
+    const promoted = runtime.store.get(created.id)!.node;
+    assert.equal(promoted.basis, "cited");
+    assert.ok(promoted.metadata.ratificationSuggested);
+
+    const second = await verify.execute({ ids: [created.id] }, toolContext);
+    assert.equal((second.metadata as any).results[0].cached, true);
+    assert.equal(fake.generated.length, 1);
+
+    const review = fake.tools.get("review")!;
+    const reviewed = await review.execute({}, toolContext);
+    assert.match(String(reviewed.content), /ratification suggested/);
+  });
+});
+
+test("memory_audit samples, runs, respects the cooldown, and records outcomes", async () => {
+  await withPlugin(async (fake, runtime) => {
+    const created = seed(runtime, "Audit policy");
+    await registerTools(fake.ctx, runtime);
+
+    const audit = fake.tools.get("audit")!;
+    const preview = await audit.execute(
+      { mode: "candidates", uniformRate: 1, riskRate: 0, limit: 10 },
+      toolContext,
+    );
+    assert.match(String(preview.content), /Audit candidates/);
+    assert.deepEqual((preview.metadata as any).ids, [created.node!.id]);
+
+    const run = await audit.execute(
+      { mode: "run", uniformRate: 1, riskRate: 0, limit: 10 },
+      toolContext,
+    );
+    assert.equal((run.metadata as any).results[0].verdict, "supported");
+    assert.equal(fake.generated.length, 1);
+
+    const coolingDown = await audit.execute(
+      { mode: "run", uniformRate: 1, riskRate: 0, limit: 10 },
+      toolContext,
+    );
+    assert.match(String(coolingDown.content), /No audit candidates/);
+    assert.equal(fake.generated.length, 1);
+
+    const recorded = await audit.execute(
+      { mode: "record", id: created.node!.id, outcome: "stale", reason: "Source changed." },
+      toolContext,
+    );
+    assert.match(String(recorded.content), /Recorded stale audit/);
+    assert.equal(runtime.store.get(created.node!.id)!.node.status, "stale");
   });
 });
 
@@ -496,10 +595,10 @@ test("skill registration reads the bundled skill and falls back when missing", a
   assert.match(fallback.content, /Project memory/);
 });
 
-test("registerSkills registers both the daily and onboarding skills", async () => {
+test("registerSkills registers the daily, onboarding, and verification skills", async () => {
   await withPlugin(async (fake) => {
     await registerSkills(fake.ctx);
-    assert.equal(fake.skills.length, 2);
+    assert.equal(fake.skills.length, 3);
     const byID = new Map(fake.skills.map((skill) => [skill.id, skill]));
     assert.equal(byID.has("project-memory"), true);
     const onboarding = byID.get("goldfish-onboarding");
@@ -510,16 +609,21 @@ test("registerSkills registers both the daily and onboarding skills", async () =
     assert.match(onboarding?.content ?? "", /exact title/);
     assert.match(onboarding?.content ?? "", /suggest/i);
     assert.match(onboarding?.content ?? "", /Write nothing/);
+    const verification = byID.get("goldfish-verification");
+    assert.equal(verification?.autoinvoke, true);
+    assert.match(verification?.content ?? "", /memory_verify/);
+    assert.match(verification?.content ?? "", /must not set .*verified/i);
   });
 });
 
 test("the onboarding command injects a scoped onboarding prompt", async () => {
   await withPlugin(async (fake) => {
     await registerCommands(fake.ctx);
-    assert.equal(fake.commands.length, 1);
+    assert.deepEqual(
+      fake.commands.map((command) => command.name),
+      ["goldfish-onboard", "goldfish-verify", "goldfish-audit", "goldfish-review"],
+    );
     const command = fake.commands[0];
-    assert.equal(command.name, "goldfish-onboard");
-
     await command.execute({
       sessionID: "ses_test",
       prompt: { text: "packages/billing" },
@@ -539,5 +643,27 @@ test("the onboarding command injects a scoped onboarding prompt", async () => {
       delivery: "steer",
     });
     assert.match(String(fake.prompts[1].text), /Scope: whole project/);
+
+    await fake.commands[1].execute({
+      sessionID: "ses_test",
+      prompt: { text: "decision/billing" },
+      delivery: "steer",
+    });
+    assert.match(String(fake.prompts[2].text), /memory_verify/);
+    assert.match(String(fake.prompts[2].text), /decision\/billing/);
+
+    await fake.commands[2].execute({
+      sessionID: "ses_test",
+      prompt: { text: "" },
+      delivery: "steer",
+    });
+    assert.match(String(fake.prompts[3].text), /memory_audit/);
+
+    await fake.commands[3].execute({
+      sessionID: "ses_test",
+      prompt: { text: "" },
+      delivery: "steer",
+    });
+    assert.match(String(fake.prompts[4].text), /memory_review/);
   });
 });
