@@ -752,7 +752,7 @@ export class MemoryStore {
           )
           .all(ftsQuery, candidateLimit)
       : this.db
-          .prepare("SELECT n.*, 0 AS bm25 FROM nodes ORDER BY updated_at DESC LIMIT ?")
+          .prepare("SELECT n.*, 0 AS bm25 FROM nodes n ORDER BY n.updated_at DESC LIMIT ?")
           .all(candidateLimit);
 
     const queryTokens = queryTokensFor(query.query);
@@ -1189,7 +1189,8 @@ export class MemoryStore {
       });
     }
 
-    const riskSlots = Math.max(1, Math.ceil(candidates.length * riskRate));
+    const riskSlots =
+      riskRate <= 0 ? 0 : Math.max(1, Math.ceil(candidates.length * riskRate));
     for (const candidate of [...candidates].sort((left, right) => right.risk - left.risk).slice(0, riskSlots)) {
       if (selected.has(candidate.node.id)) continue;
       selected.set(candidate.node.id, {

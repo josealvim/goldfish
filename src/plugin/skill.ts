@@ -9,11 +9,11 @@ const SKILL_NAME = "Project Memory";
 const SKILL_DESCRIPTION =
   "Recall and contribute project-specific knowledge (decisions, gotchas, patterns, components, docs, and past learnings) without reading whole files. Use before planning unfamiliar work and after learning a durable, non-obvious fact.";
 
-const SKILL_PATH = fileURLToPath(
+export const SKILL_PATH = fileURLToPath(
   new URL("../../.opencode/skills/project-memory/SKILL.md", import.meta.url),
 );
 
-const FALLBACK_CONTENT = `# Project memory
+export const FALLBACK_CONTENT = `# Project memory
 
 This project has a local knowledge base exposed through the \`memory\` tools.
 
@@ -33,12 +33,18 @@ function stripFrontmatter(value: string): string {
   return value.slice(end + 4).trimStart();
 }
 
-export async function registerSkill(ctx: PluginContext): Promise<Registration> {
-  let content = FALLBACK_CONTENT;
+export function readSkillContent(path = SKILL_PATH): { content: string; fallback: boolean } {
   try {
-    content = stripFrontmatter(readFileSync(SKILL_PATH, "utf8"));
-  } catch (error) {
-    console.error("project-memory: could not read the skill file; using the embedded fallback", error);
+    return { content: stripFrontmatter(readFileSync(path, "utf8")), fallback: false };
+  } catch {
+    return { content: FALLBACK_CONTENT, fallback: true };
+  }
+}
+
+export async function registerSkill(ctx: PluginContext): Promise<Registration> {
+  const loaded = readSkillContent();
+  if (loaded.fallback) {
+    console.error("project-memory: could not read the skill file; using the embedded fallback");
   }
 
   try {
@@ -49,7 +55,7 @@ export async function registerSkill(ctx: PluginContext): Promise<Registration> {
         description: SKILL_DESCRIPTION,
         autoinvoke: true,
         path: Skill.Info.fields.path.make(SKILL_PATH),
-        content,
+        content: loaded.content,
       } as never);
     });
   } catch (error) {

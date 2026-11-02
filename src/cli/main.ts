@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { MemoryStore } from "../core/store.ts";
 import { defaultDbPath, ensureParent, findProjectRoot } from "../core/paths.ts";
+import { importBundle, type ImportBundle } from "../core/import.ts";
 import {
   formatNeighbors,
   formatNode,
@@ -13,14 +14,10 @@ import {
 } from "../core/format.ts";
 import type {
   AuditRecordInput,
-  CitationInput,
   EdgeType,
-  LinkInput,
-  MemoryNode,
   MemoryProposal,
   NodeKind,
   RecallQuery,
-  SourceType,
 } from "../core/types.ts";
 
 interface ParsedArgs {
@@ -119,60 +116,6 @@ function readJsonLines(file: string): unknown[] {
 
 function readFileIfExists(file: string): unknown[] {
   return existsSync(file) ? readJsonLines(file) : [];
-}
-
-function parseObject(value: string | undefined): Record<string, unknown> {
-  if (!value) return {};
-  try {
-    const parsed = JSON.parse(value);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : {};
-  } catch {
-    return {};
-  }
-}
-
-/**
- * Import targets before the nodes that link to them. A simple reverse
- * topological order is enough; cycles fall back to file order.
- */
-function orderNodesByDependencies(
-  nodes: MemoryNode[],
-  edges: Array<{ from_id: string; to_id: string }>,
-): MemoryNode[] {
-  const byID = new Map(nodes.map((node) => [node.id, node]));
-  const ids = new Set(byID.keys());
-  const outgoing = new Map<string, Set<string>>();
-  const incoming = new Map<string, Set<string>>();
-  for (const edge of edges) {
-    if (!ids.has(edge.from_id) || !ids.has(edge.to_id)) continue;
-    if (!outgoing.has(edge.from_id)) outgoing.set(edge.from_id, new Set());
-    outgoing.get(edge.from_id)!.add(edge.to_id);
-    if (!incoming.has(edge.to_id)) incoming.set(edge.to_id, new Set());
-    incoming.get(edge.to_id)!.add(edge.from_id);
-  }
-
-  const remainingOut = new Map(nodes.map((node) => [node.id, outgoing.get(node.id)?.size ?? 0]));
-  const queue = nodes.filter((node) => (remainingOut.get(node.id) ?? 0) === 0).map((node) => node.id);
-  const ordered: string[] = [];
-  const seen = new Set<string>();
-  while (queue.length) {
-    const id = queue.shift()!;
-    if (seen.has(id)) continue;
-    seen.add(id);
-    ordered.push(id);
-    for (const parent of incoming.get(id) ?? []) {
-      if (seen.has(parent)) continue;
-      const remaining = (remainingOut.get(parent) ?? 1) - 1;
-      remainingOut.set(parent, remaining);
-      if (remaining === 0) queue.push(parent);
-    }
-  }
-  for (const node of nodes) {
-    if (!seen.has(node.id)) ordered.push(node.id);
-  }
-  return ordered.map((id) => byID.get(id)!).filter(Boolean);
 }
 
 function splitList(values: string[]): string[] {
@@ -457,85 +400,19 @@ async function main(): Promise<void> {
       const sourcesFile = path.join(directory, "sources.jsonl");
       const citationsFile = path.join(directory, "citations.jsonl");
       const edgesFile = path.join(directory, "edges.jsonl");
-      const rawNodes = readJsonLines(nodesFile) as MemoryNode[];
-      const rawSources = readFileIfExists(sourcesFile) as Array<{
-        id: string;
-        type: SourceType;
-        locator: string;
-        metadata_json?: string;
-      }>;
-      const rawCitations = readFileIfExists(citationsFile) as Array<{
-        node_id: string;
-        node_version: number;
-        source_id: string;
-        locator_json?: string;
-        excerpt?: string;
-      }>;
-      const rawEdges = readFileIfExists(edgesFile) as Array<{
-        from_id: string;
-        to_id: string;
-        type: EdgeType;
-        weight?: number;
-      }>;
-
-      const sourcesByID = new Map(rawSources.map((source) => [source.id, source]));
-      const citationsByNode = new Map<string, CitationInput[]>();
-      for (const citation of rawCitations) {
-        const source = sourcesByID.get(citation.source_id);
-        if (!source) continue;
-        const key = `${citation.node_id}:${Number(citation.node_version)}`;
-        const list = citationsByNode.get(key) ?? [];
-        list.push({
-          type: source.type,
-          locator: source.locator,
-          excerpt: citation.excerpt,
-          metadata: parseObject(citation.locator_json),
-        });
-        citationsByNode.set(key, list);
-      }
-
-      const edgesByFrom = new Map<
-        string,
-        { supersedes?: string; contradicts: string[]; links: LinkInput[] }
-      >();
-      for (const edge of rawEdges) {
-        const entry = edgesByFrom.get(edge.from_id) ?? { contradicts: [], links: [] };
-        if (edge.type === "supersedes") entry.supersedes = edge.to_id;
-        else if (edge.type === "contradicts") entry.contradicts.push(edge.to_id);
-        else entry.links.push({ to: edge.to_id, type: edge.type, weight: edge.weight ?? 1 });
-        edgesByFrom.set(edge.from_id, entry);
-      }
-
-      const ordered = orderNodesByDependencies(rawNodes, rawEdges);
+      const bundle: ImportBundle = {
+        nodes: readJsonLines(nodesFile) as ImportBundle["nodes"],
+        sources: readFileIfExists(sourcesFile) as ImportBundle["sources"],
+        citations: readFileIfExists(citationsFile) as ImportBundle["citations"],
+        edges: readFileIfExists(edgesFile) as ImportBundle["edges"],
+      };
 
       await withStore(args, (store) => {
-        const counts: Record<string, number> = {};
-        for (const node of ordered) {
-          const edges = edgesByFrom.get(node.id);
-          const citations = citationsByNode.get(`${node.id}:${Number(node.version)}`) ?? [];
-          const proposal: MemoryProposal = {
-            kind: node.kind,
-            title: node.title,
-            body: node.body,
-            scope: node.scope,
-            tags: node.tags,
-            basis: node.basis,
-            confidence: node.confidence,
-            citations,
-            links: edges?.links,
-            supersedes: edges?.supersedes,
-            contradicts: edges?.contradicts.length ? edges.contradicts : undefined,
-            metadata: { ...node.metadata, importedFrom: directory },
-          };
-          const result = store.remember(proposal, {
-            author: node.author ?? { type: "system", id: "import" },
-          });
-          counts[result.action] = (counts[result.action] ?? 0) + 1;
-        }
-        const summary = Object.entries(counts)
+        const result = importBundle(store, bundle, { directory });
+        const summary = Object.entries(result.counts)
           .map(([action, count]) => `${action}=${count}`)
           .join(", ");
-        console.log(`Imported ${rawNodes.length} node(s) from ${directory}${summary ? ` (${summary})` : ""}`);
+        console.log(`Imported ${result.imported} node(s) from ${directory}${summary ? ` (${summary})` : ""}`);
       });
       return;
     }
