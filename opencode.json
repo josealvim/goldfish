@@ -1,0 +1,15 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": [
+    {
+      "package": "./.opencode/plugins/project-memory",
+      "options": {
+        "autoRecall": true,
+        "autoInject": true,
+        "injectBudgetTokens": 700,
+        "injectMaxCards": 5,
+        "requireWritePermission": false
+      }
+    }
+  ]
+}

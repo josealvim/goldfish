@@ -1,0 +1,56 @@
+{
+  "name": "monkey-memory",
+  "version": "0.1.0",
+  "description": "Local-first project memory for OpenCode agents",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/josealvim/monkey-memory.git"
+  },
+  "homepage": "https://github.com/josealvim/monkey-memory",
+  "bugs": {
+    "url": "https://github.com/josealvim/monkey-memory/issues"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "memory",
+    "knowledge-graph",
+    "sqlite",
+    "ai-agents"
+  ],
+  "exports": {
+    ".": "./index.ts"
+  },
+  "files": [
+    "src",
+    "index.ts",
+    ".opencode/skills",
+    "docs",
+    "AGENTS.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/**/*.test.ts",
+    "memory": "tsx src/cli/main.ts",
+    "seed": "tsx src/cli/main.ts seed test/fixtures/seed.jsonl"
+  },
+  "dependencies": {},
+  "peerDependencies": {
+    "@opencode/plugin": ">=2.1.4"
+  },
+  "peerDependenciesMeta": {
+    "@opencode/plugin": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@opencode/plugin": "2.1.4",
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  }
+}

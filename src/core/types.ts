@@ -1,0 +1,288 @@
+export const NODE_KINDS = [
+  "fact",
+  "decision",
+  "concept",
+  "component",
+  "pattern",
+  "gotcha",
+  "runbook",
+  "document",
+  "source",
+  "session",
+] as const;
+
+export type NodeKind = (typeof NODE_KINDS)[number];
+
+export const EDGE_TYPES = [
+  "cites",
+  "derived_from",
+  "supersedes",
+  "contradicts",
+  "revises",
+  "depends_on",
+  "part_of",
+  "applies_to",
+  "related_to",
+  "documents",
+  "implements",
+] as const;
+
+export type EdgeType = (typeof EDGE_TYPES)[number];
+
+export const BASES = ["verified", "cited", "inferred"] as const;
+export type Basis = (typeof BASES)[number];
+
+export const NODE_STATUSES = ["active", "disputed", "stale", "superseded", "archived"] as const;
+export type NodeStatus = (typeof NODE_STATUSES)[number];
+
+export const VERIFICATION_STATES = [
+  "not_required",
+  "unverified",
+  "queued",
+  "confirmed",
+  "rejected",
+  "needs_human",
+] as const;
+export type VerificationState = (typeof VERIFICATION_STATES)[number];
+
+export const SOURCE_TYPES = [
+  "file",
+  "commit",
+  "pr",
+  "issue",
+  "url",
+  "session",
+  "human",
+  "doc",
+  "test",
+] as const;
+export type SourceType = (typeof SOURCE_TYPES)[number];
+
+export interface Author {
+  type: "agent" | "human" | "system";
+  id: string;
+  sessionID?: string;
+}
+
+export interface CitationInput {
+  type: SourceType;
+  locator: string;
+  excerpt?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface Citation extends CitationInput {
+  sourceID: string;
+  contentHash?: string;
+  excerptHash?: string;
+  observedAt: string;
+  validation: "ok" | "missing" | "unchecked";
+}
+
+export interface MemoryNode {
+  id: string;
+  kind: NodeKind;
+  title: string;
+  body: string;
+  scope: string[];
+  tags: string[];
+  status: NodeStatus;
+  basis: Basis;
+  confidence: number;
+  verificationState: VerificationState;
+  canonicalKey: string;
+  version: number;
+  author: Author;
+  createdAt: string;
+  updatedAt: string;
+  lastConfirmedAt?: string;
+  validFrom?: string;
+  validTo?: string;
+  materialRevisionAt?: string;
+  autoInjectEligible: boolean;
+  metadata: Record<string, unknown>;
+}
+
+export interface NodeVersion {
+  nodeID: string;
+  version: number;
+  title: string;
+  body: string;
+  basis: Basis;
+  confidence: number;
+  status: NodeStatus;
+  verificationState: VerificationState;
+  author: Author;
+  reason?: string;
+  evidence: unknown[];
+  createdAt: string;
+}
+
+export interface Edge {
+  fromID: string;
+  toID: string;
+  type: EdgeType;
+  weight: number;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  retiredAt?: string;
+}
+
+export interface LinkInput {
+  to: string;
+  type: EdgeType;
+  weight?: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface MemoryProposal {
+  kind: NodeKind;
+  title: string;
+  body: string;
+  scope?: string[];
+  tags?: string[];
+  citations?: CitationInput[];
+  links?: LinkInput[];
+  basis?: Basis;
+  confidence?: number;
+  supersedes?: string;
+  contradicts?: string[];
+  metadata?: Record<string, unknown>;
+}
+
+export interface WriteContext {
+  author: Author;
+  sessionID?: string;
+  agent?: string;
+  messageID?: string;
+  now?: string;
+}
+
+export type RememberAction = "created" | "merged" | "revised" | "conflict" | "rejected";
+
+export interface RememberResult {
+  action: RememberAction;
+  node?: MemoryNode;
+  conflicts?: string[];
+  reasons?: string[];
+}
+
+export interface RecallQuery {
+  query: string;
+  scope?: string[];
+  kinds?: NodeKind[];
+  statuses?: NodeStatus[];
+  includeInferred?: boolean;
+  includeDisputed?: boolean;
+  includeStale?: boolean;
+  includeArchived?: boolean;
+  autoInjectOnly?: boolean;
+  limit?: number;
+  budgetTokens?: number;
+  minScore?: number;
+}
+
+export interface MemoryCard {
+  id: string;
+  kind: NodeKind;
+  title: string;
+  body: string;
+  scope: string[];
+  tags: string[];
+  status: NodeStatus;
+  basis: Basis;
+  confidence: number;
+  verificationState: VerificationState;
+  citations: Citation[];
+  related: Array<{ id: string; type: EdgeType }>;
+  score: number;
+  reasons: string[];
+}
+
+export interface RecallResult {
+  query: string;
+  cards: MemoryCard[];
+  candidates: number;
+  tokens: number;
+  hasMore: boolean;
+}
+
+export interface NeighborOptions {
+  edgeTypes?: EdgeType[];
+  direction?: "out" | "in" | "both";
+  depth?: number;
+  limit?: number;
+}
+
+export interface Neighbor {
+  node: MemoryNode;
+  edge: Edge;
+  direction: "out" | "in";
+  depth: number;
+}
+
+export interface NeighborResult {
+  node: MemoryNode;
+  neighbors: Neighbor[];
+}
+
+export interface MemoryDetail {
+  node: MemoryNode;
+  versions: NodeVersion[];
+  citations: Citation[];
+  edges: Edge[];
+}
+
+export interface MemoryStats {
+  nodes: Record<string, number>;
+  statuses: Record<string, number>;
+  bases: Record<string, number>;
+  kinds: Record<string, number>;
+  verification: Record<string, number>;
+  events: number;
+  injections: number;
+  audits: number;
+}
+
+export interface ReviewItem {
+  node: MemoryNode;
+  reasons: string[];
+}
+
+export interface AuditCandidate {
+  node: MemoryNode;
+  trigger: "uniform" | "risk";
+  riskScore: number;
+  reasons: string[];
+}
+
+export interface AuditRecordInput {
+  nodeID: string;
+  version: number;
+  trigger: "uniform" | "risk" | "dispute" | "stale" | "verification" | "manual";
+  outcome:
+    | "supported"
+    | "partially_supported"
+    | "contradicted"
+    | "insufficient"
+    | "stale"
+    | "malicious"
+    | "confirmed"
+    | "rejected"
+    | "needs_human";
+  auditor?: Record<string, unknown>;
+  findings?: Record<string, unknown>;
+  sampledBy?: string;
+  riskScore?: number;
+}
+
+export interface ExportBundle {
+  schemaVersion: number;
+  exportedAt: string;
+  projectRoot: string;
+  nodes: MemoryNode[];
+  versions: unknown[];
+  edges: unknown[];
+  sources: unknown[];
+  citations: unknown[];
+}

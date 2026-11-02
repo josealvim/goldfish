@@ -1,0 +1,10 @@
+{"query":"injection policy for inferred claims","expected":["decision/use-optimistic-writes-with-earned-auto-injection","gotcha/inferred-claims-must-not-auto-inject"],"k":5}
+{"query":"audit sampling rate","expected":["decision/sample-audits-with-3-percent-uniform-and-7-percent-risk-weighted"],"k":5}
+{"query":"strict scopes auth payments production","expected":["decision/require-verified-evidence-in-strict-scopes"],"k":5}
+{"query":"sqlite full text search storage","expected":["decision/use-sqlite-with-fts5-for-project-memory","gotcha/bun-sqlite-and-node-sqlite-need-a-shared-adapter"],"k":5}
+{"query":"claims and entities in the graph","expected":["decision/model-claims-and-entities-as-separate-node-kinds"],"k":5}
+{"query":"automatic recall prompt hook","expected":["decision/run-automatic-recall-from-the-prompt-hook"],"k":5}
+{"query":"bun sqlite node sqlite adapter","expected":["gotcha/bun-sqlite-and-node-sqlite-need-a-shared-adapter"],"k":5}
+{"query":"what is earned injection","expected":["concept/earned-injection"],"k":5}
+{"query":"export memory bundle","expected":["decision/export-curated-memory-as-a-deterministic-jsonl-bundle"],"k":5}
+{"query":"memory store component","expected":["component/memory-store"],"k":5}
