@@ -626,6 +626,13 @@ export class MemoryStore {
           scope,
         );
         this.updateNodeRow(merged);
+        this.linkTargets(merged.id, proposal.links, author, reasons);
+        if (supersedesTarget && String(supersedesTarget.id) !== merged.id) {
+          this.markSuperseded(String(supersedesTarget.id), merged.id, author);
+        }
+        for (const target of contradictionTargets) {
+          if (String(target.id) !== merged.id) this.markTargetDisputed(String(target.id), merged.id, author);
+        }
         this.recordEvent(author, "merge", merged.id, {
           citations: citations.length,
           basis: merged.basis,

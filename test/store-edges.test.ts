@@ -215,6 +215,31 @@ test("graph expansion is below the seed and does not drag in hub neighbors", asy
   });
 });
 
+test("merge writes persist newly added links and supersession", async () => {
+  await withStore((store) => {
+    const target = cited(store, "Merge target");
+    const source = cited(store, "Merge source");
+    const merged = store.remember(
+      {
+        kind: "decision",
+        title: "Merge source",
+        body: "Merge source body.",
+        citations: [{ type: "file", locator: "docs/decisions.md" }],
+        links: [{ to: target.node!.id, type: "depends_on" }],
+        supersedes: target.node!.id,
+      },
+      { author },
+    );
+    assert.equal(merged.action, "merged");
+    assert.ok(
+      store
+        .get(source.node!.id)
+        ?.edges.some((edge) => edge.type === "depends_on" && edge.toID === target.node!.id),
+    );
+    assert.equal(store.get(target.node!.id)?.node.status, "superseded");
+  });
+});
+
 test("titles with the same slug revise one node instead of duplicating", async () => {
   await withStore((store) => {
     const first = cited(store, "Use SQLite!");

@@ -5,7 +5,7 @@ set -euo pipefail
 #
 # Usage:
 #   ./install.sh
-#   ./install.sh github:josealvim/goldfish#v0.2.0
+#   ./install.sh github:josealvim/goldfish#v0.2.1
 #   GOLDFISH_SPEC=github:josealvim/goldfish ./install.sh
 
 SPEC="${1:-${GOLDFISH_SPEC:-github:josealvim/goldfish}}"
