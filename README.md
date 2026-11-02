@@ -35,6 +35,14 @@ opencode plugin add github:josealvim/monkey-memory
 opencode plugin add github:josealvim/monkey-memory#v0.1.0
 ```
 
+Or clone the repository and run the installer:
+
+```sh
+git clone https://github.com/josealvim/monkey-memory.git
+cd monkey-memory
+./install.sh
+```
+
 ### Manual Git install
 
 ```sh
@@ -53,6 +61,11 @@ Add the cloned directory to `~/.config/opencode/opencode.json`:
 
 For a project-local install, clone into `.opencode/plugins/monkey-memory` and
 add `"./.opencode/plugins/monkey-memory"` to that project's config.
+
+If a project already has the local development wrapper at
+`.opencode/plugins/project-memory` configured, do not also install the global
+Git plugin in that same project. OpenCode will list both copies. Use one or the
+other: the local wrapper for development, the Git install for consumption.
 
 The plugin registers the `project-memory` skill itself, so no project-local
 skill is required. A plain clone works without `npm install`: OpenCode provides
