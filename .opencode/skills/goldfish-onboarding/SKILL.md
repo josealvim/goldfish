@@ -126,9 +126,11 @@ Skip:
 - `basis: "derived"` only when every premise is already `cited` or `verified`
   and linked with `derived_from`. A derived claim is not auto-injected until the
   graph verifier confirms all premises.
-- Do **not** use `verified` unless a human or a reproducible test confirmed the
-  claim. The user confirming the overview is a human confirmation; record it as
-  a `human` citation only when they explicitly confirm.
+- Do **not** use `verified` unless a human, a reproducible test, or a commit
+  confirmed the claim. If the user explicitly confirms a claim, use
+  `memory_admin.confirm as="verified"` with a reason; it records a human
+  citation and is permission-gated. Do not add a human citation by hand to
+  bypass that review action.
 - Do not run the full test suite unless the user asks. Cite CI or test config
   instead.
 - Use `scope` for paths, packages, or services.

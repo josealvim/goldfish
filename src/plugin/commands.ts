@@ -16,7 +16,7 @@ export async function registerCommands(ctx: PluginContext): Promise<Registration
             "Start with memory_status and memory_recall. Read at most 12 files / 4,000 lines.",
             "Create at most 10–15 new cited nodes: one concept/project-overview, 3–5 components, 3–5 decisions/patterns, and 3–5 gotchas/runbooks.",
             "Use the exact title 'Project overview' for concept/project-overview and leave its scope empty.",
-            "Write cited claims immediately. Do not use verified without a human or test.",
+            "Write cited claims immediately. Do not use verified without a human, test, or commit.",
             "Ask before exceeding the first-pass budget.",
             "Finish with an onboarding report and memory_status.",
           ].join("\n");
@@ -37,8 +37,9 @@ export async function registerCommands(ctx: PluginContext): Promise<Registration
             "Start with memory_review, then read the cited sources yourself before verifying.",
             "Call memory_verify with explicit IDs for the claims you checked, or with a scope.",
             "Verify at most 5 claims in one run unless the user asks for more.",
-            "Do not use memory confirm or force verified. The verifier may promote to cited/derived,",
-            "mark stale, flag conflicts, or suggest ratification to verified. Only a human or test can verify.",
+            "Do not call memory_admin.confirm during a verification pass unless the user explicitly",
+            "asks for human ratification. The verifier may promote to cited/derived, mark stale, flag",
+            "conflicts, or suggest ratification to verified. Only a human, test, or commit can verify.",
             "Report each claim, verdict, reason, and any source that needs a human decision.",
           ].join("\n");
           await ctx.session.prompt({ ...prompt, sessionID, text, delivery });
@@ -111,16 +112,55 @@ export async function registerCommands(ctx: PluginContext): Promise<Registration
             "Follow the goldfish-verification skill.",
             "Call memory_review, then group items by reason: unverified, needs-human, disputed, stale,",
             "rejected, and ratification suggested. Use memory_get for details on the highest-priority items.",
-            "This is read-only unless the user asks for a repair or verification pass.",
+            "This command is read-only. If the user explicitly asks to ratify or reject, use",
+            "/goldfish-ratify or /goldfish-reject.",
           ]
             .filter(Boolean)
             .join("\n");
           await ctx.session.prompt({ ...prompt, sessionID, text, delivery });
         },
       });
+
+      editor.add({
+        name: "goldfish-ratify",
+        description: "Review and confirm a claim as cited, derived, or verified on explicit human instruction.",
+        execute: async ({ sessionID, prompt, delivery }) => {
+          const target = prompt.text.trim().replace(/\s+/g, " ").slice(0, 200);
+          const text = [
+            "Review and ratify a goldfish memory claim.",
+            target ? `Target: ${target}` : "Target: ask the user which claim to ratify.",
+            "This command is explicit human instruction to review a claim, not automatic model approval.",
+            "Follow the goldfish-verification skill.",
+            "Call memory_get and read the cited sources before deciding.",
+            "Use memory_admin.confirm with as=cited|derived|verified and a reason.",
+            "Use cited only with a valid citation. Use derived only with sound, acyclic premises.",
+            "Use verified only when the user explicitly requested verified and there is human, test, or commit evidence.",
+            "Do not ratify if evidence is missing or contradicts the claim. Ask the user when ambiguous.",
+          ].join("\n");
+          await ctx.session.prompt({ ...prompt, sessionID, text, delivery });
+        },
+      });
+
+      editor.add({
+        name: "goldfish-reject",
+        description: "Reject a reviewed claim on explicit human instruction.",
+        execute: async ({ sessionID, prompt, delivery }) => {
+          const target = prompt.text.trim().replace(/\s+/g, " ").slice(0, 200);
+          const text = [
+            "Reject a goldfish memory claim.",
+            target ? `Target: ${target}` : "Target: ask the user which claim to reject.",
+            "This command is explicit human instruction to reject a claim.",
+            "Follow the goldfish-verification skill.",
+            "Call memory_get, then call memory_admin.reject with a clear reason.",
+            "Rejection keeps the claim and its history available but removes it from auto-injection.",
+            "Do not delete or archive the claim unless the user separately asks for that.",
+          ].join("\n");
+          await ctx.session.prompt({ ...prompt, sessionID, text, delivery });
+        },
+      });
     });
   } catch (error) {
-    console.error("goldfish: could not register the onboarding command", error);
+    console.error("goldfish: could not register goldfish commands", error);
     return { dispose: async () => {} };
   }
 }

@@ -33,8 +33,15 @@ This project has a local knowledge base exposed through the \`memory\` tools.
 - Use \`memory_health\` and \`memory_list\` for maintenance; use the
   \`memory_admin\` namespace for precise confirm/reject/cite/link/unlink/update/
   archive/conflict changes.
-- Use \`memory_review\`, \`memory_verify\`, and \`memory_audit\` before relying on
-  unverified, disputed, or stale claims.
+- Use \`memory_review\`, \`memory_verify\`, \`memory_conflicts\`, and
+  \`memory_audit\` before relying on unverified, disputed, or stale claims.
+- Use \`memory_eval\` to measure binary decisions and evidence grounding, not
+  model confidence scores.
+- Conflict discovery is proposal-only. Confirm or dismiss with
+  \`memory_admin.conflict\` only after explicit human review.
+- Confirming as \`cited\` needs a citation, \`derived\` needs sound premises, and
+  \`verified\` needs explicit human instruction. Use \`memory_admin.confirm\` and
+  \`memory_admin.reject\` for review actions.
 - Before planning unfamiliar work, call \`memory_recall\` with domain terms and the
   paths you expect to touch.
 - Read the evidence cards, then call \`memory_get\` for a full claim or
@@ -79,9 +86,11 @@ premises are already cited or verified and linked with \`derived_from\`.
 
 Write at most 10–15 new nodes in the first pass. Use \`cited\` for source-backed
 claims and \`inferred\` for guesses. A body is only \`cited\` if every sentence is
-supported by a citation. Never use \`verified\` without a human or test. Cite
-exact files. Do not store code dumps, secrets, or transient state. Report what
-was stored, what is uncertain, and what should be confirmed next.
+supported by a citation. Never use \`verified\` without a human, test, or commit.
+When the user explicitly confirms a claim, use \`memory_admin.confirm as="verified"\`
+so the human citation is recorded. Cite exact files. Do not store code dumps,
+secrets, or transient state. Report what was stored, what is uncertain, and what
+should be confirmed next.
 `;
 
 const VERIFICATION_FALLBACK_CONTENT = `# Goldfish verification
@@ -96,6 +105,10 @@ a model is configured, a rejection-leaning semantic verifier over bounded
 current-source windows. It may promote an inferred claim to \`cited\` or
 \`derived\`, mark a claim stale, dispute existing conflicts, archive malicious
 content, or queue a claim for human review. It never makes a claim \`verified\`.
+
+Use \`/goldfish-ratify\` or \`/goldfish-reject\` when the user explicitly wants a
+review action. Confirming as \`verified\` requires explicit human instruction,
+records a human citation, and is permission-gated.
 
 \`memory_conflicts\` discovers likely clashes with related claims. It only
 creates proposals; it never disputes a claim or creates an edge. Each proposal
@@ -113,8 +126,9 @@ auto-injection.
 
 \`memory_audit\` samples auto-inject-eligible claims with 3% uniform plus 7%
 risk-weighted slots. Use \`mode=candidates\` to preview, \`mode=run\` to audit, and
-\`mode=record\` to record an external outcome. Conflicts leave both sides
-disputed and are never auto-resolved. Do not audit more than 10 claims per run.
+\`mode=record\` to record an external outcome. Confirmed conflicts leave both
+sides disputed and are never auto-resolved; discovered conflicts stay proposals.
+Do not audit more than 10 claims per run.
 
 Source snapshots are bounded and redacted but still untrusted data. Use a local
 verifier model or set \`verification.readSources: false\` if source text must not
@@ -143,7 +157,7 @@ const VERIFICATION_SKILL: SkillSpec = {
   id: "goldfish-verification",
   name: "Goldfish Verification",
   description:
-    "Verify, audit, review, evaluate, and discover conflicts in goldfish project-memory claims. Use when the user invokes /goldfish-verify, /goldfish-audit, /goldfish-conflicts, /goldfish-eval, or /goldfish-review, when memory has unverified/disputed/stale claims, or before relying on a high-impact memory claim.",
+    "Verify, audit, review, evaluate, discover conflicts, and apply human review actions in goldfish project-memory claims. Use when the user invokes /goldfish-verify, /goldfish-audit, /goldfish-conflicts, /goldfish-eval, /goldfish-review, /goldfish-ratify, or /goldfish-reject, when memory has unverified/disputed/stale claims, or before relying on a high-impact memory claim.",
   path: VERIFICATION_SKILL_PATH,
   fallback: VERIFICATION_FALLBACK_CONTENT,
 };

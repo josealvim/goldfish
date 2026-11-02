@@ -1,6 +1,6 @@
 ---
 name: Goldfish Verification
-description: Verify, audit, review, evaluate, and discover conflicts in goldfish project-memory claims. Use when the user invokes /goldfish-verify, /goldfish-audit, /goldfish-conflicts, /goldfish-eval, or /goldfish-review, when memory has unverified/disputed/stale claims, or before relying on a high-impact memory claim.
+description: Verify, audit, review, evaluate, discover conflicts, and apply human review actions in goldfish project-memory claims. Use when the user invokes /goldfish-verify, /goldfish-audit, /goldfish-conflicts, /goldfish-eval, /goldfish-review, /goldfish-ratify, or /goldfish-reject, when memory has unverified/disputed/stale claims, or before relying on a high-impact memory claim.
 metadata:
   opencode/autoinvoke: true
 ---
@@ -40,6 +40,9 @@ evidence and, for `verified`, only on explicit human instruction. Confirming as
 `verified` records a human citation and is permission-gated. Use
 `memory_admin.reject` when the claim is wrong or unsupported; it remains in
 history but stops auto-injecting.
+
+The equivalent commands are `/goldfish-ratify` and `/goldfish-reject` when the
+user wants to act on a specific claim.
 
 ## Verification pass
 
@@ -112,7 +115,10 @@ A conflict is not a vote. When two claims conflict:
 - `/goldfish-audit [target]` — sample and audit auto-inject-eligible claims.
 - `/goldfish-conflicts [target]` — discover and review likely conflicts.
 - `/goldfish-eval [suite]` — evaluate binary decisions and evidence grounding.
+  The equivalent tool is `memory_eval`.
 - `/goldfish-review [scope]` — show and explain the review queue.
+- `/goldfish-ratify [target]` — review and confirm a claim as cited, derived, or verified.
+- `/goldfish-reject [target]` — reject a reviewed claim.
 
 ## Safety
 

@@ -839,6 +839,9 @@ test("skill registration reads the bundled skill and falls back when missing", a
   const fallback = readSkillContent("/definitely/not/a/real/SKILL.md");
   assert.equal(fallback.fallback, true);
   assert.match(fallback.content, /Project memory/);
+  assert.match(fallback.content, /memory_conflicts/);
+  assert.match(fallback.content, /memory_eval/);
+  assert.match(fallback.content, /memory_admin\.confirm/);
 });
 
 test("registerSkills registers the daily, onboarding, and verification skills", async () => {
@@ -855,10 +858,13 @@ test("registerSkills registers the daily, onboarding, and verification skills", 
     assert.match(onboarding?.content ?? "", /exact title/);
     assert.match(onboarding?.content ?? "", /suggest/i);
     assert.match(onboarding?.content ?? "", /Write nothing/);
+    assert.match(onboarding?.content ?? "", /human, a reproducible test, or a commit/);
     const verification = byID.get("goldfish-verification");
     assert.equal(verification?.autoinvoke, true);
     assert.match(verification?.content ?? "", /memory_verify/);
     assert.match(verification?.content ?? "", /memory_conflicts/);
+    assert.match(verification?.content ?? "", /memory_eval/);
+    assert.match(verification?.content ?? "", /goldfish-ratify/);
     assert.match(verification?.content ?? "", /must not set .*verified/i);
   });
 });
@@ -875,6 +881,8 @@ test("the onboarding command injects a scoped onboarding prompt", async () => {
         "goldfish-conflicts",
         "goldfish-eval",
         "goldfish-review",
+        "goldfish-ratify",
+        "goldfish-reject",
       ],
     );
     const command = fake.commands[0];
@@ -890,6 +898,7 @@ test("the onboarding command injects a scoped onboarding prompt", async () => {
     assert.match(text, /12 files/);
     assert.match(text, /concept\/project-overview/);
     assert.match(text, /exact title/);
+    assert.match(text, /human, test, or commit/);
 
     await command.execute({
       sessionID: "ses_test",
@@ -935,5 +944,20 @@ test("the onboarding command injects a scoped onboarding prompt", async () => {
       delivery: "steer",
     });
     assert.match(String(fake.prompts[6].text), /memory_review/);
+
+    await fake.commands[6].execute({
+      sessionID: "ses_test",
+      prompt: { text: "decision/example as=verified" },
+      delivery: "steer",
+    });
+    assert.match(String(fake.prompts[7].text), /memory_admin\.confirm/);
+    assert.match(String(fake.prompts[7].text), /human, test, or commit/);
+
+    await fake.commands[7].execute({
+      sessionID: "ses_test",
+      prompt: { text: "gotcha/example" },
+      delivery: "steer",
+    });
+    assert.match(String(fake.prompts[8].text), /memory_admin\.reject/);
   });
 });

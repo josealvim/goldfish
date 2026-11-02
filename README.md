@@ -43,7 +43,7 @@ No npm publish is required. The package is installed directly from Git.
 opencode plugin add github:josealvim/goldfish
 
 # Pin a release tag
-opencode plugin add github:josealvim/goldfish#v0.7.0
+opencode plugin add github:josealvim/goldfish#v0.8.0
 ```
 
 Or clone the repository and run the installer:
@@ -124,11 +124,12 @@ npm run memory -- recall "how does injection work?"
 | `memory_audit` | Preview or run a sampled audit; record an external outcome. Conflicts are never auto-resolved. |
 | `memory_eval` | Run the support/conflict evaluation suites against the configured verifier using temporary stores. |
 
-`memory_admin.confirm` and `memory_admin.reject` complete the review loop.
-Confirm supports `cited`, `derived`, and `verified`. Confirming as `verified`
-requires explicit human instruction, is permission-gated, records a human
-citation, and clears the ratification suggestion. Rejection keeps the claim in
-history but removes it from auto-injection.
+`memory_admin.confirm` and `memory_admin.reject` complete the review loop; the
+`/goldfish-ratify` and `/goldfish-reject` commands provide explicit human entry
+points. Confirm supports `cited`, `derived`, and `verified`. Confirming as
+`verified` requires explicit human instruction, is permission-gated, records a
+human citation, and clears the ratification suggestion. Rejection keeps the
+claim in history but removes it from auto-injection.
 
 `memory_admin.conflict` confirms or dismisses a proposed conflict. Confirming
 adds the `contradicts` edge and marks both sides disputed; dismissing leaves
@@ -136,7 +137,8 @@ both claims untouched.
 
 The `project-memory` skill teaches the daily workflow. The
 `goldfish-onboarding` skill bootstraps a new project. The
-`goldfish-verification` skill covers verification, audit, and review.
+`goldfish-verification` skill covers verification, conflicts, audit, evaluation,
+and human review actions.
 `AGENTS.md` carries the short policy so it applies even when a skill is not
 loaded.
 
@@ -162,7 +164,7 @@ The onboarding workflow:
   decisions/patterns, and 3–5 gotchas/runbooks
 - uses the fixed `concept/project-overview` ID
 - marks source-backed claims `cited`, guesses `inferred`, and never uses
-  `verified` without a human or test
+  `verified` without a human, test, or commit
 - reports coverage and asks before expanding the first pass
 
 If memory is empty and you did not ask to onboard, the model should suggest
@@ -230,6 +232,8 @@ The plugin also registers the corresponding commands:
 /goldfish-audit [target]     sample and audit eligible claims
 /goldfish-conflicts [target] discover and review likely conflicts
 /goldfish-eval [suite]       run verification/conflict evaluation suites
+/goldfish-ratify [target]    review and confirm a claim
+/goldfish-reject [target]    reject a reviewed claim
 ```
 
 Precise changes use the `memory_admin` namespace through Code Mode:
