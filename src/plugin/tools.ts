@@ -399,8 +399,9 @@ export async function registerTools(ctx: PluginContext, runtime: Runtime): Promi
           content: formatRemember(result),
           metadata: {
             action: result.action,
-            nodeID: result.node?.id,
-            autoInjectEligible: result.node?.autoInjectEligible,
+            ...(result.node
+              ? { nodeID: result.node.id, autoInjectEligible: result.node.autoInjectEligible }
+              : {}),
           },
         };
       },
@@ -486,7 +487,7 @@ export async function registerTools(ctx: PluginContext, runtime: Runtime): Promi
           metadata: {
             total: result.total,
             returned: result.items.length,
-            nextOffset: result.nextOffset,
+            ...(result.nextOffset !== undefined ? { nextOffset: result.nextOffset } : {}),
           },
         };
       },

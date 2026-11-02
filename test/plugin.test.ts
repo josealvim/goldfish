@@ -256,6 +256,17 @@ test("memory_status reports onboarding progress through empty, recommended, part
   });
 });
 
+test("memory_list handles an empty store without undefined metadata", async () => {
+  await withPlugin(async (fake, runtime) => {
+    await registerTools(fake.ctx, runtime);
+    const list = fake.tools.get("list")!;
+    const result = await list.execute({ limit: 5 }, toolContext);
+    assert.match(String(result.content), /No memory nodes matched/);
+    assert.equal((result.metadata as any).total, 0);
+    assert.equal("nextOffset" in (result.metadata as any), false);
+  });
+});
+
 test("memory_list and memory_health expose read-only diagnostics", async () => {
   await withPlugin(async (fake, runtime) => {
     seed(runtime);

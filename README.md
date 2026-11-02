@@ -32,7 +32,7 @@ No npm publish is required. The package is installed directly from Git.
 opencode plugin add github:josealvim/goldfish
 
 # Pin a release tag
-opencode plugin add github:josealvim/goldfish#v0.3.0
+opencode plugin add github:josealvim/goldfish#v0.3.1
 ```
 
 Or clone the repository and run the installer:
@@ -384,7 +384,7 @@ npm test
 npm run seed
 ```
 
-The 52 tests cover policy and glob matching, recall filters and budgets,
+The 53 tests cover policy and glob matching, recall filters and budgets,
 material revisions and supersession, multi-conflict forks, audit sampling and
 outcomes, export/import round-trips, observe/edit operations, plugin tool
 registration, auto-recall and fallback hooks, skill and command registration,
