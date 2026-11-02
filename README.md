@@ -43,7 +43,7 @@ No npm publish is required. The package is installed directly from Git.
 opencode plugin add github:josealvim/goldfish
 
 # Pin a release tag
-opencode plugin add github:josealvim/goldfish#v0.6.0
+opencode plugin add github:josealvim/goldfish#v0.7.0
 ```
 
 Or clone the repository and run the installer:
@@ -122,6 +122,7 @@ npm run memory -- recall "how does injection work?"
 | `memory_conflicts` | Discover likely conflicts with related claims and store proposals for review. Never disputes a claim automatically. |
 | `memory_review` | Show the review queue, including proposed conflicts. |
 | `memory_audit` | Preview or run a sampled audit; record an external outcome. Conflicts are never auto-resolved. |
+| `memory_eval` | Run the support/conflict evaluation suites against the configured verifier using temporary stores. |
 
 `memory_admin.confirm` and `memory_admin.reject` complete the review loop.
 Confirm supports `cited`, `derived`, and `verified`. Confirming as `verified`
@@ -189,6 +190,7 @@ memory_verify { "ids": ["decision/example"] }
 memory_conflicts { "ids": ["decision/example"] }
 memory_audit { "mode": "candidates", "limit": 10 }
 memory_audit { "mode": "run", "limit": 10 }
+memory_eval { "suite": "all", "limit": 25 }
 memory_admin.confirm { "id": "decision/example", "as": "verified", "reason": "Human checked the source." }
 memory_admin.reject { "id": "gotcha/example", "reason": "The current source contradicts this." }
 ```
@@ -208,6 +210,11 @@ content, or queue it for human review. It never promotes to `verified`. It may
 attach a ratification suggestion, which appears in `memory_review` and
 `memory_health`.
 
+Model verdicts are binary decisions with a short reason and evidence list. The
+verifier is not asked for confidence scores or thresholds. Acceptance is based
+on whether the decision is supported by grounded evidence, not on a
+persuasive-looking number.
+
 `memory_conflicts` retrieves related claims through text, graph, scope, and tag
 signals, then compares bounded source windows. It stores proposals only: it
 never marks a claim disputed or creates a `contradicts` edge. A proposal records
@@ -222,6 +229,7 @@ The plugin also registers the corresponding commands:
 /goldfish-verify [target]    verify up to 5 claims
 /goldfish-audit [target]     sample and audit eligible claims
 /goldfish-conflicts [target] discover and review likely conflicts
+/goldfish-eval [suite]       run verification/conflict evaluation suites
 ```
 
 Precise changes use the `memory_admin` namespace through Code Mode:
@@ -290,7 +298,36 @@ npm run memory -- eval
 ```
 
 `remember --json` accepts an inline JSON object or a file path. `seed` accepts a
-JSONL file of proposals; see `test/fixtures/seed.jsonl`.
+JSONL file of proposals; see `test/fixtures/seed.jsonl`. CLI `eval` measures
+recall only.
+
+## Verifier evaluation
+
+The plugin exposes `memory_eval` and `/goldfish-eval` for the semantic verifier
+and conflict detector. They use temporary stores and never modify project
+memory.
+
+```text
+/goldfish-eval support
+/goldfish-eval conflicts
+/goldfish-eval all
+```
+
+Bundled fixtures live in `evals/support.jsonl` and `evals/conflicts.jsonl`.
+Each case seeds claims and files, builds the real evidence packet, and compares
+the binary decision plus evidence grounding.
+
+The report includes:
+
+- verdict accuracy and false-support/false-conflict counts
+- supported precision and recall
+- conflict pair precision, recall, and F1
+- candidate retrieval recall
+- evidence grounding and expected-evidence matches
+- per-case evidence quotes and failure reasons
+
+Model runs are report-only and should not be used to tune a numeric threshold.
+The useful signal is the decision plus grounded evidence.
 
 ## Claim format
 
@@ -390,8 +427,7 @@ directory from `opencode.json(c)` with an object entry:
         },
         "conflict": {
           "maxPerRun": 3,
-          "candidatesPerClaim": 3,
-          "minConfidence": 0.6
+          "candidatesPerClaim": 3
         }
       }
     }
@@ -409,8 +445,8 @@ expires.
 `verification.readSources` defaults to `true` for explicit verification. Source
 windows are capped by `windowLines`, `maxSourceBytes`, and
 `maxPacketSourceBytes`. Set it to `false` if source text must not be sent to a
-remote model. `conflict.maxPerRun`, `conflict.candidatesPerClaim`, and
-`conflict.minConfidence` bound conflict discovery cost and noise.
+remote model. `conflict.maxPerRun` and `conflict.candidatesPerClaim` bound
+conflict-discovery cost and noise.
 
 `requireWritePermission: true` routes `memory_remember` through
 `ctx.permission.assert` with action `memory.remember`. The default is `false`
@@ -447,11 +483,14 @@ audits(node_id, node_version, trigger, sampled_by, risk_score, auditor,
 feedback(node_id, node_version, source, outcome, details, created_at)
 
 conflict_proposals(id, node_a, node_b, node_a_version, node_b_version, status,
-                   relation, confidence, reason, evidence, input_hash,
-                   timestamps)
+                   relation, reason, evidence, input_hash, timestamps)
 
 events(ts, actor, action, node_id, payload)
 ```
+
+`conflict_proposals.confidence` remains in older databases for compatibility but
+is no longer written or displayed; proposals are judged by their evidence, not a
+model grade.
 
 Node kinds: `fact`, `decision`, `concept`, `component`, `pattern`, `gotcha`,
 `runbook`, `document`, `source`, `session`.
@@ -471,6 +510,7 @@ src/core/        storage, schema, policy, recall, verification, conflicts,
 src/cli/         CLI entry point
 src/plugin/      OpenCode plugin, tools, hooks, runtime
 .opencode/       local plugin wrapper and project-memory skill
+evals/           support and conflict evaluation fixtures
 docs/            citation source for the seed
 test/            core tests and seed fixture
 ```
@@ -484,6 +524,8 @@ The core has no OpenCode imports. The plugin is an adapter over the same
   expansion come first; add vectors only if evaluation shows lexical misses.
 - Verification, conflict discovery, and audit are command-first. Background
   workers and automated repair tiers are not implemented.
+- Model evaluation is report-only. It measures binary decisions and evidence
+  grounding, not confidence calibration.
 - Conflict discovery compares a bounded candidate set; it is not an exhaustive
   all-pairs scan.
 - Source snapshots cover file citations only. URLs, issues, PRs, and commits
@@ -503,7 +545,7 @@ npm test
 npm run seed
 ```
 
-The 67 tests cover policy and glob matching, recall filters and budgets,
+The 72 tests cover policy and glob matching, recall filters and budgets,
 material revisions and supersession, multi-conflict forks, bounded source
 snapshots and redaction, citation freshness, derived cycles and premise
 soundness, verifier verdicts and caching, conflict candidate retrieval,
@@ -524,7 +566,8 @@ status, and CLI end-to-end and error paths.
 - Strict scopes require verified evidence.
 - Confirmed conflicts mark both sides disputed and are never auto-resolved.
   Discovered conflicts are proposals until a human confirms them.
-- Semantic verification is rejection-leaning and cannot promote to `verified`.
+- Semantic verification is rejection-leaning, evidence-based, and cannot promote
+  to `verified`.
 - `memory_admin.confirm as="verified"` is explicit, permission-gated, and records
   a human citation.
 - The plugin never bypasses normal edit, shell, or test permissions.

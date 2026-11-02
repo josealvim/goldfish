@@ -87,35 +87,46 @@ test("relatedClaims uses text and graph signals but excludes disjoint scopes and
   });
 });
 
-test("conflict verdict parsing validates candidate IDs and keeps the strongest duplicate", () => {
+test("conflict verdict parsing validates candidate IDs and requires evidence", () => {
   const parsed = parseConflictVerdict(
     JSON.stringify({
       conflicts: [
         {
           id: "decision/allowed",
           relation: "contradicts",
-          confidence: 0.5,
           reason: "Weak conflict.",
           evidence: [{ locator: "file:docs/decisions.md", quote: "Conflict source." }],
         },
         {
           id: "decision/allowed",
           relation: "contradicts",
-          confidence: 0.9,
           reason: "Strong conflict.",
-          evidence: [{ locator: "file:docs/decisions.md", quote: "Conflict source." }],
+          evidence: [
+            { locator: "file:docs/decisions.md", quote: "Conflict source." },
+            {
+              locator: "file:docs/decisions.md",
+              quote: "A second source line.",
+              why: "It narrows the scope.",
+            },
+          ],
         },
         {
           id: "decision/unknown",
           relation: "contradicts",
-          confidence: 0.99,
           reason: "Invented candidate.",
+          evidence: [{ locator: "file:docs/decisions.md", quote: "Conflict source." }],
         },
         {
           id: "decision/allowed",
           relation: "supersedes",
-          confidence: 0.99,
           reason: "Not a conflict relation.",
+          evidence: [{ locator: "file:docs/decisions.md", quote: "Conflict source." }],
+        },
+        {
+          id: "decision/allowed",
+          relation: "contradicts",
+          reason: "No evidence.",
+          evidence: [],
         },
       ],
     }),
@@ -123,8 +134,9 @@ test("conflict verdict parsing validates candidate IDs and keeps the strongest d
   );
   assert.equal(parsed.cacheable, true);
   assert.equal(parsed.findings.length, 1);
-  assert.equal(parsed.findings[0]?.confidence, 0.9);
+  assert.equal(parsed.findings[0]?.evidence.length, 2);
   assert.match(parsed.findings[0]?.reason ?? "", /Strong conflict/);
+  assert.match(parsed.findings[0]?.evidence[1]?.why ?? "", /scope/);
 
   const invalid = parseConflictVerdict("not json", new Set());
   assert.equal(invalid.cacheable, false);
@@ -149,9 +161,14 @@ test("conflict proposals are canonical, stale on revision, dismissible, and conf
       nodeAVersion: candidate.version,
       nodeBVersion: target.version,
       relation: "contradicts" as const,
-      confidence: 0.82,
       reason: "The claims cannot both be true.",
-      evidence: [{ locator: "file:docs/decisions.md", quote: "Conflict source." }],
+      evidence: [
+        {
+          locator: "file:docs/decisions.md",
+          quote: "Conflict source.",
+          why: "The source defines the conflict.",
+        },
+      ],
       inputHash: "hash-1",
     };
     const proposal = store.upsertConflictProposal(input)!;
@@ -223,9 +240,14 @@ test("conflict proposals are canonical, stale on revision, dismissible, and conf
       nodeAVersion: fresh.version,
       nodeBVersion: freshCandidate.version,
       relation: "contradicts",
-      confidence: 0.9,
       reason: "These cannot both be true.",
-      evidence: [],
+      evidence: [
+        {
+          locator: "file:docs/decisions.md",
+          quote: "Conflict source.",
+          why: "The source defines the conflict.",
+        },
+      ],
       inputHash: "hash-4",
     });
     const confirmed = store.confirmConflict(

@@ -1591,14 +1591,14 @@ export class MemoryStore {
         .prepare(
           `INSERT INTO conflict_proposals
             (node_a, node_b, node_a_version, node_b_version, status, relation,
-             confidence, reason, evidence_json, input_hash, created_at, updated_at)
-           VALUES(?, ?, ?, ?, 'proposed', ?, ?, ?, ?, ?, ?, ?)
+             reason, evidence_json, input_hash, created_at, updated_at)
+           VALUES(?, ?, ?, ?, 'proposed', ?, ?, ?, ?, ?, ?)
            ON CONFLICT(node_a, node_b) DO UPDATE SET
              node_a_version = excluded.node_a_version,
              node_b_version = excluded.node_b_version,
              status = 'proposed',
              relation = excluded.relation,
-             confidence = excluded.confidence,
+             confidence = 0,
              reason = excluded.reason,
              evidence_json = excluded.evidence_json,
              input_hash = excluded.input_hash,
@@ -1610,7 +1610,6 @@ export class MemoryStore {
           nodeA.version,
           nodeB.version,
           input.relation,
-          clamp(input.confidence, 0, 1),
           input.reason,
           JSON.stringify(input.evidence),
           input.inputHash,
@@ -1619,7 +1618,6 @@ export class MemoryStore {
         );
       this.recordEvent(author, "conflict_propose", a, {
         target: b,
-        confidence: clamp(input.confidence, 0, 1),
         relation: input.relation,
       });
       return this.getConflictProposal(a, b);
@@ -1782,7 +1780,6 @@ export class MemoryStore {
       nodeBVersion,
       status,
       relation: String(row.relation) as ConflictProposal["relation"],
-      confidence: Number(row.confidence),
       reason: String(row.reason),
       evidence: parseJson<ConflictProposal["evidence"]>(row.evidence_json, []),
       inputHash: String(row.input_hash),

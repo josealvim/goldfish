@@ -49,7 +49,6 @@ function makeFake(options: {
     options.verificationResponse ??
     JSON.stringify({
       verdict: "supported",
-      confidence: 0.8,
       suggestedAction: "ratify_verified",
       reason: "The cited source supports the claim.",
       evidence: [],
@@ -217,6 +216,7 @@ test("registers agent tools and executes recall/get", async () => {
       "confirm",
       "conflict",
       "conflicts",
+      "eval",
       "get",
       "health",
       "link",
@@ -386,10 +386,13 @@ test("memory_conflicts proposes a conflict and memory_admin.conflict confirms it
           {
             id: "decision/conflict-policy-beta",
             relation: "contradicts",
-            confidence: 0.91,
             reason: "One claim uses an outbox; the other publishes directly.",
             evidence: [
-              { locator: "file:docs/decisions.md", quote: "Injection policy." },
+              {
+                locator: "file:docs/decisions.md",
+                quote: "Injection policy.",
+                why: "The source describes the delivery path.",
+              },
             ],
           },
         ],
@@ -518,6 +521,24 @@ test("memory_admin.confirm and reject complete the human review loop", async () 
       ),
       /without a citation/,
     );
+  });
+});
+
+test("memory_eval runs a bundled support suite without touching project memory", async () => {
+  await withPlugin(async (fake, runtime) => {
+    await registerTools(fake.ctx, runtime);
+    const evaluate = fake.tools.get("eval")!;
+    const result = await evaluate.execute(
+      {
+        suite: "support",
+        file: path.resolve("evals/support.jsonl"),
+        limit: 2,
+      },
+      toolContext,
+    );
+    assert.match(String(result.content), /Support evaluation/);
+    assert.equal((result.metadata as any).support.total, 2);
+    assert.equal(runtime.store.status().total, 0);
   });
 });
 
@@ -852,6 +873,7 @@ test("the onboarding command injects a scoped onboarding prompt", async () => {
         "goldfish-verify",
         "goldfish-audit",
         "goldfish-conflicts",
+        "goldfish-eval",
         "goldfish-review",
       ],
     );
@@ -901,9 +923,17 @@ test("the onboarding command injects a scoped onboarding prompt", async () => {
 
     await fake.commands[4].execute({
       sessionID: "ses_test",
+      prompt: { text: "support" },
+      delivery: "steer",
+    });
+    assert.match(String(fake.prompts[5].text), /memory_eval/);
+    assert.match(String(fake.prompts[5].text), /support/);
+
+    await fake.commands[5].execute({
+      sessionID: "ses_test",
       prompt: { text: "" },
       delivery: "steer",
     });
-    assert.match(String(fake.prompts[5].text), /memory_review/);
+    assert.match(String(fake.prompts[6].text), /memory_review/);
   });
 });

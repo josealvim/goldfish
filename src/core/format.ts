@@ -180,9 +180,15 @@ export function formatReview(items: ReviewItem[], conflicts: ConflictProposal[] 
     for (const proposal of conflicts) {
       lines.push(
         `- ${proposal.nodeA.id} ↔ ${proposal.nodeB.id}`,
-        `  [${proposal.relation} · ${proposal.confidence.toFixed(2)}] ${proposal.reason}`,
-        `  Confirm with memory_admin.conflict action=confirm, or dismiss it.`,
+        `  [${proposal.relation}] ${proposal.reason}`,
       );
+      for (const evidence of proposal.evidence.slice(0, 3)) {
+        lines.push(
+          `  Evidence: ${evidence.locator} — "${evidence.quote.slice(0, 160)}"` +
+            (evidence.why ? ` (${evidence.why})` : ""),
+        );
+      }
+      lines.push(`  Confirm with memory_admin.conflict action=confirm, or dismiss it.`);
     }
   }
   return lines.join("\n");

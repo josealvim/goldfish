@@ -1,6 +1,6 @@
 ---
 name: Goldfish Verification
-description: Verify, audit, review, and discover conflicts in goldfish project-memory claims. Use when the user invokes /goldfish-verify, /goldfish-audit, /goldfish-conflicts, or /goldfish-review, when memory has unverified/disputed/stale claims, or before relying on a high-impact memory claim.
+description: Verify, audit, review, evaluate, and discover conflicts in goldfish project-memory claims. Use when the user invokes /goldfish-verify, /goldfish-audit, /goldfish-conflicts, /goldfish-eval, or /goldfish-review, when memory has unverified/disputed/stale claims, or before relying on a high-impact memory claim.
 metadata:
   opencode/autoinvoke: true
 ---
@@ -76,10 +76,12 @@ source windows, and stores proposals only.
 - It ignores invented candidate IDs.
 - A dismissed proposal is not re-proposed until one claim version changes.
 
-Show the proposal, confidence, reason, and evidence. Ask the user before
-confirming. Use `memory_admin.conflict` with `action: "confirm"` only on
-explicit human instruction; that adds the edge and marks both sides disputed.
-Use `action: "dismiss"` for false positives.
+Show the proposal, reason, and evidence. Do not ask the model for confidence
+scores or thresholds; judge the binary decision by whether its evidence items
+actually support it. Ask the user before confirming. Use
+`memory_admin.conflict` with `action: "confirm"` only on explicit human
+instruction; that adds the edge and marks both sides disputed. Use
+`action: "dismiss"` for false positives.
 
 ## Audit pass
 
@@ -109,6 +111,7 @@ A conflict is not a vote. When two claims conflict:
 - `/goldfish-verify [target]` — verify up to 5 claims.
 - `/goldfish-audit [target]` — sample and audit auto-inject-eligible claims.
 - `/goldfish-conflicts [target]` — discover and review likely conflicts.
+- `/goldfish-eval [suite]` — evaluate binary decisions and evidence grounding.
 - `/goldfish-review [scope]` — show and explain the review queue.
 
 ## Safety

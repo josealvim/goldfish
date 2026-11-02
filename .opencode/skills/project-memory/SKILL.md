@@ -35,6 +35,9 @@ Conflict discovery is proposal-only. It never disputes a claim or creates a
 `contradicts` edge. Use `memory_admin.conflict` to confirm or dismiss a proposal
 only after explicit human review.
 
+Use `memory_eval` to measure binary verifier decisions and evidence grounding
+against the bundled suites. Do not tune a numeric model threshold from one run.
+
 For precise changes, use the `memory_admin` namespace through `execute`:
 
 - `memory_admin.cite` — add citations without rewriting the body

@@ -33,7 +33,6 @@ export interface Runtime {
   auditRiskRate: number;
   conflictMaxPerRun: number;
   conflictCandidatesPerClaim: number;
-  conflictMinConfidence: number;
 }
 
 function numberOption(value: unknown, fallback: number): number {
@@ -144,16 +143,6 @@ export async function createRuntime(ctx: PluginContext): Promise<Runtime> {
         numberOption(
           options.conflictCandidatesPerClaim ?? conflictOptions.candidatesPerClaim,
           3,
-        ),
-      ),
-    ),
-    conflictMinConfidence: Math.max(
-      0,
-      Math.min(
-        1,
-        numberOption(
-          options.conflictMinConfidence ?? conflictOptions.minConfidence,
-          0.6,
         ),
       ),
     ),

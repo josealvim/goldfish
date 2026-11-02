@@ -416,12 +416,12 @@ export type ConflictStatus = "proposed" | "confirmed" | "dismissed" | "stale";
 export interface ConflictEvidence {
   locator: string;
   quote: string;
+  why?: string;
 }
 
 export interface ConflictFinding {
   candidateID: string;
   relation: ConflictRelation;
-  confidence: number;
   reason: string;
   evidence: ConflictEvidence[];
 }
@@ -434,7 +434,6 @@ export interface ConflictProposal {
   nodeBVersion: number;
   status: ConflictStatus;
   relation: ConflictRelation;
-  confidence: number;
   reason: string;
   evidence: ConflictEvidence[];
   inputHash: string;
@@ -449,7 +448,6 @@ export interface ConflictProposalInput {
   nodeAVersion: number;
   nodeBVersion: number;
   relation: ConflictRelation;
-  confidence: number;
   reason: string;
   evidence: ConflictEvidence[];
   inputHash: string;

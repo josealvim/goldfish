@@ -1,6 +1,6 @@
 {
   "name": "goldfish",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Local-first project memory for OpenCode agents",
   "type": "module",
   "license": "MIT",
@@ -29,6 +29,7 @@
     "index.ts",
     ".opencode/skills",
     "docs",
+    "evals",
     "AGENTS.md",
     "README.md",
     "LICENSE"

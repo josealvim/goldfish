@@ -51,7 +51,6 @@ export class ModelVerifier implements Verifier {
     } catch (error) {
       return {
         verdict: "insufficient",
-        confidence: 0,
         suggestedAction: "needs_human",
         reason: `Verifier error: ${error instanceof Error ? error.message : String(error)}`,
         evidence: [],

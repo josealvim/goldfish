@@ -61,6 +61,20 @@ queue and health report. Semantic verdicts are cached by an input hash that
 covers the claim version, citations, premises, conflicts, and citation
 freshness. A material revision resets verification.
 
+## Model verdicts are binary with evidence
+
+Semantic verifier and conflict-analyst prompts return a binary decision, a short
+reason, and a list of concrete evidence items. They are not asked for confidence
+scores or numeric grades. A claim’s stored confidence is project metadata, not a
+model output. Contradiction and partial-support outcomes use fixed project rules
+rather than a model-provided number.
+
+A conflict proposal is accepted only when it names a known candidate, gives a
+reason, and includes at least one evidence item with a locator and quote. The
+consumer judges the evidence; it does not rely on a persuasive-looking score.
+Evaluation therefore measures verdict accuracy, false-support and false-conflict
+rates, candidate retrieval, and evidence grounding.
+
 ## Human review actions are explicit and versioned
 
 A model may suggest a verdict or a ratification, but a human decision is a
@@ -98,9 +112,10 @@ that they are worth the cost and complexity.
 Conflict discovery retrieves related claims through text, graph, scope, and tag
 signals, then compares the target against a bounded candidate set using current
 source windows. The model may only return candidate IDs it was given. A
-discovery result is stored as a proposal, not as an edge or status change. It
-never marks either claim `disputed`, because a model-detected clash can be a
-false positive.
+discovery result must include a short reason and at least one grounded evidence
+item; proposals without evidence are ignored. A discovery result is stored as a
+proposal, not as an edge or status change. It never marks either claim
+`disputed`, because a model-detected clash can be a false positive.
 
 Proposals deduplicate by a canonical pair and record both claim versions. A
 material revision makes the proposal stale. A dismissed proposal is not

@@ -60,7 +60,6 @@ function remember(
 function verdict(overrides: Partial<VerificationVerdict> = {}): VerificationVerdict {
   return {
     verdict: "supported",
-    confidence: 0.8,
     suggestedAction: "confirm",
     reason: "The source directly supports the claim.",
     evidence: [],
@@ -296,10 +295,15 @@ test("verdict parsing accepts fenced JSON and rejects malformed output", () => {
       "```json",
       JSON.stringify({
         verdict: "partially_supported",
-        confidence: 1.5,
         suggestedAction: "needs_human",
         reason: "Only part of the claim is stated.",
-        evidence: [{ locator: "file:docs/decisions.md", quote: "Verification source." }],
+        evidence: [
+          {
+            locator: "file:docs/decisions.md",
+            quote: "Verification source.",
+            why: "The quote states only one part of the claim.",
+          },
+        ],
         premises: [{ id: "decision/premise", sound: false, reason: "inferred" }],
         conflicts: [{ id: "decision/other", resolution: "contest" }],
       }),
@@ -307,8 +311,8 @@ test("verdict parsing accepts fenced JSON and rejects malformed output", () => {
     ].join("\n"),
   );
   assert.equal(parsed.verdict, "partially_supported");
-  assert.equal(parsed.confidence, 1);
   assert.equal(parsed.evidence[0]?.supports, true);
+  assert.match(parsed.evidence[0]?.why ?? "", /only one part/);
   assert.equal(parsed.premises[0]?.sound, false);
   assert.equal(parsed.conflicts[0]?.resolution, "contest");
   assert.equal(parsed.cacheable, true);

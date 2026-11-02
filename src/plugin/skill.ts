@@ -87,8 +87,8 @@ was stored, what is uncertain, and what should be confirmed next.
 const VERIFICATION_FALLBACK_CONTENT = `# Goldfish verification
 
 Use this when the user invokes \`/goldfish-verify\`, \`/goldfish-audit\`,
-\`/goldfish-conflicts\`, or \`/goldfish-review\`, or before relying on an
-unverified, disputed, or stale claim.
+\`/goldfish-conflicts\`, \`/goldfish-eval\`, or \`/goldfish-review\`, or before
+relying on an unverified, disputed, or stale claim.
 
 Call \`memory_review\` first, then \`memory_get\` for the claims that matter. Read
 the cited sources yourself. \`memory_verify\` runs deterministic checks and, when
@@ -98,8 +98,13 @@ current-source windows. It may promote an inferred claim to \`cited\` or
 content, or queue a claim for human review. It never makes a claim \`verified\`.
 
 \`memory_conflicts\` discovers likely clashes with related claims. It only
-creates proposals; it never disputes a claim or creates an edge. Use
-\`memory_admin.conflict\` to confirm or dismiss only after explicit human review.
+creates proposals; it never disputes a claim or creates an edge. Each proposal
+must include a reason and grounded evidence. Use \`memory_admin.conflict\` to
+confirm or dismiss only after explicit human review.
+
+\`memory_eval\` runs the support and conflict suites with temporary stores. It
+reports binary decisions, evidence grounding, candidate recall, and failures.
+Do not ask the model for confidence scores or numeric thresholds.
 
 \`memory_admin.confirm\` accepts \`cited\`, \`derived\`, or \`verified\`. Confirming
 as \`verified\` requires explicit human instruction, records a human citation, and
@@ -138,7 +143,7 @@ const VERIFICATION_SKILL: SkillSpec = {
   id: "goldfish-verification",
   name: "Goldfish Verification",
   description:
-    "Verify, audit, review, and discover conflicts in goldfish project-memory claims. Use when the user invokes /goldfish-verify, /goldfish-audit, /goldfish-conflicts, or /goldfish-review, when memory has unverified/disputed/stale claims, or before relying on a high-impact memory claim.",
+    "Verify, audit, review, evaluate, and discover conflicts in goldfish project-memory claims. Use when the user invokes /goldfish-verify, /goldfish-audit, /goldfish-conflicts, /goldfish-eval, or /goldfish-review, when memory has unverified/disputed/stale claims, or before relying on a high-impact memory claim.",
   path: VERIFICATION_SKILL_PATH,
   fallback: VERIFICATION_FALLBACK_CONTENT,
 };

@@ -1,5 +1,15 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Registration } from "@opencode/plugin/promise/registration";
 import type { ToolContext } from "@opencode/plugin/promise/tool";
+import {
+  formatConflictEval,
+  formatSupportEval,
+  loadConflictCases,
+  loadSupportCases,
+  runConflictEval,
+  runSupportEval,
+} from "../core/eval.ts";
 import {
   formatAuditCandidates,
   formatMemoryHealth,
@@ -155,6 +165,14 @@ interface ConflictAdminInput {
   to: string;
   reason: string;
 }
+
+interface EvalInput {
+  suite?: "support" | "conflicts" | "all";
+  file?: string;
+  limit?: number;
+}
+
+const BUNDLED_EVAL_DIR = fileURLToPath(new URL("../../evals", import.meta.url));
 
 const recallSchema = {
   type: "object",
@@ -438,6 +456,16 @@ const conflictAdminSchema = {
     reason: { type: "string" },
   },
   required: ["action", "from", "to", "reason"],
+  additionalProperties: false,
+} as const;
+
+const evalSchema = {
+  type: "object",
+  properties: {
+    suite: { type: "string", enum: ["support", "conflicts", "all"] },
+    file: { type: "string" },
+    limit: { type: "integer", minimum: 1, maximum: 200 },
+  },
   additionalProperties: false,
 } as const;
 
@@ -813,6 +841,62 @@ export async function registerTools(ctx: PluginContext, runtime: Runtime): Promi
     });
 
     editor.add({
+      name: "eval",
+      description:
+        "Run the bundled verification and conflict evaluation suites against the configured verifier. " +
+        "Uses temporary fixture stores, does not modify project memory, and reports binary decisions, " +
+        "evidence grounding, and aggregate metrics.",
+      input: evalSchema,
+      options: { namespace: "memory", codemode: false },
+      execute: async (raw) => {
+        const input = (raw ?? {}) as EvalInput;
+        const suite = input.suite ?? "all";
+        if (input.file && suite === "all") {
+          throw new Error("file requires suite=support or suite=conflicts");
+        }
+        const limit = Math.max(1, Math.min(input.limit ?? 25, 200));
+        const sections: string[] = [];
+        const metadata: Record<string, unknown> = {};
+        const fileFor = (name: "support" | "conflicts") =>
+          input.file
+            ? path.resolve(runtime.projectRoot, input.file)
+            : path.join(BUNDLED_EVAL_DIR, `${name}.jsonl`);
+        const packetOptions = {
+          readSources: runtime.verificationReadSources,
+          windowLines: runtime.verificationWindowLines,
+          maxSourceBytes: runtime.verificationMaxSourceBytes,
+          maxPacketSourceBytes: runtime.verificationMaxPacketSourceBytes,
+          candidatesPerClaim: runtime.conflictCandidatesPerClaim,
+        };
+
+        if (suite === "support" || suite === "all") {
+          const cases = loadSupportCases(fileFor("support")).slice(0, limit);
+          const result = await runSupportEval(cases, runtime.verifier, packetOptions);
+          sections.push(formatSupportEval(result));
+          metadata.support = result.metrics;
+        }
+        if (suite === "conflicts" || suite === "all") {
+          if (!runtime.conflictVerifier) {
+            sections.push("Conflict evaluation skipped: semantic conflict discovery is disabled.");
+          } else {
+            const cases = loadConflictCases(fileFor("conflicts")).slice(0, limit);
+            const result = await runConflictEval(
+              cases,
+              runtime.conflictVerifier,
+              packetOptions,
+            );
+            sections.push(formatConflictEval(result));
+            metadata.conflicts = result.metrics;
+          }
+        }
+        return {
+          content: sections.join("\n\n"),
+          metadata: { suite, limit, ...metadata },
+        };
+      },
+    });
+
+    editor.add({
       name: "conflicts",
       description:
         "Discover likely conflicts between a claim and related claims. Compares bounded current-source evidence, " +
@@ -941,9 +1025,7 @@ export async function registerTools(ctx: PluginContext, runtime: Runtime): Promi
               });
               continue;
             }
-            findings = verdict.findings.filter(
-              (finding) => finding.confidence >= runtime.conflictMinConfidence,
-            );
+            findings = verdict.findings;
             for (const finding of findings) {
               const candidate = candidatePackets.find(
                 (packet) => packet.node.id === finding.candidateID,
@@ -956,7 +1038,6 @@ export async function registerTools(ctx: PluginContext, runtime: Runtime): Promi
                   nodeAVersion: targetPacket.node.version,
                   nodeBVersion: candidate.node.version,
                   relation: finding.relation,
-                  confidence: finding.confidence,
                   reason: finding.reason,
                   evidence: finding.evidence,
                   inputHash,
@@ -1012,8 +1093,12 @@ export async function registerTools(ctx: PluginContext, runtime: Runtime): Promi
               `${findings.length} proposed conflict(s)${suffix}`,
           );
           for (const finding of findings) {
+            const evidence = finding.evidence[0];
             lines.push(
-              `  · ${finding.candidateID} [${finding.confidence.toFixed(2)}] ${finding.reason}`,
+              `  · ${finding.candidateID} — ${finding.reason}` +
+                (evidence
+                  ? ` (${evidence.locator}: "${evidence.quote.slice(0, 120)}")`
+                  : ""),
             );
           }
         }

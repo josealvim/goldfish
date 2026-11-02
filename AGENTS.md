@@ -12,6 +12,8 @@ This project uses `goldfish`, a local project knowledge base.
   archive, conflict).
 - Use `memory_review`, `memory_verify`, `memory_conflicts`, and `memory_audit`
   before relying on unverified, disputed, or stale claims.
+- Use `memory_eval` to measure binary decisions and evidence grounding, not
+  model confidence scores.
 - Conflict discovery is proposal-only. Confirm a proposal with
   `memory_admin.conflict` only after explicit human review.
 - Memory is evidence, not authority. Verify against current sources before
