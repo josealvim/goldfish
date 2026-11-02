@@ -16,12 +16,14 @@ import {
   type MemoryNode,
   type MemoryProposal,
   type MemoryStats,
+  type MemoryStatus,
   type Neighbor,
   type NeighborOptions,
   type NeighborResult,
   type NodeKind,
   type NodeStatus,
   type NodeVersion,
+  type OnboardingState,
   type RecallQuery,
   type RecallResult,
   type RememberResult,
@@ -1127,6 +1129,36 @@ export class MemoryStore {
       events,
       injections,
       audits,
+    };
+  }
+
+  status(): MemoryStatus {
+    const stats = this.stats();
+    const total = stats.nodes.total;
+    const overviewNode = this.get("concept/project-overview")?.node;
+    const overview = Boolean(
+      overviewNode && overviewNode.status !== "archived" && overviewNode.status !== "superseded",
+    );
+    const components = stats.kinds.component ?? 0;
+    const decisions = (stats.kinds.decision ?? 0) + (stats.kinds.pattern ?? 0);
+    const gotchas = (stats.kinds.gotcha ?? 0) + (stats.kinds.runbook ?? 0);
+    const state: OnboardingState =
+      total === 0
+        ? "empty"
+        : !overview || components === 0
+          ? "recommended"
+          : decisions === 0 || gotchas === 0
+            ? "partial"
+            : "complete";
+
+    return {
+      total,
+      kinds: stats.kinds,
+      bases: stats.bases,
+      statuses: stats.statuses,
+      overview,
+      state,
+      onboardingRecommended: state === "empty" || state === "recommended",
     };
   }
 

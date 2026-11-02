@@ -32,7 +32,7 @@ No npm publish is required. The package is installed directly from Git.
 opencode plugin add github:josealvim/goldfish
 
 # Pin a release tag
-opencode plugin add github:josealvim/goldfish#v0.1.3
+opencode plugin add github:josealvim/goldfish#v0.2.0
 ```
 
 Or clone the repository and run the installer:
@@ -67,10 +67,10 @@ If a project already has the local development wrapper at
 Git plugin in that same project. OpenCode will list both copies. Use one or the
 other: the local wrapper for development, the Git install for consumption.
 
-The plugin registers the `project-memory` skill itself, so no project-local
-skill is required. A plain clone works without `npm install`: OpenCode provides
-`@opencode/plugin`, and the plugin entry is ordinary TypeScript. Restart
-OpenCode or run `/reload`, then verify with:
+The plugin registers the `project-memory` and `goldfish-onboarding` skills
+itself, so no project-local skill is required. A plain clone works without
+`npm install`: OpenCode provides `@opencode/plugin`, and the plugin entry is
+ordinary TypeScript. Restart OpenCode or run `/reload`, then verify with:
 
 ```sh
 opencode plugin list
@@ -103,9 +103,39 @@ npm run memory -- recall "how does injection work?"
 | `memory_remember` | Propose a durable claim with citations and optional graph links. Deduplicates and detects conflicts. |
 | `memory_get` | Read a node in full, including citations, relationships, and version history. |
 | `memory_neighbors` | Walk the knowledge graph one or two hops. |
+| `memory_status` | Show memory coverage and whether onboarding is recommended. |
 
-The `project-memory` skill teaches the workflow. `AGENTS.md` carries the short
-version so the policy applies even when the skill is not loaded.
+The `project-memory` skill teaches the daily workflow. The
+`goldfish-onboarding` skill bootstraps a new project. `AGENTS.md` carries the
+short policy so it applies even when a skill is not loaded.
+
+## Onboarding a new project
+
+A freshly installed project starts with an empty knowledge base. Run:
+
+```text
+/goldfish-onboard
+```
+
+or scope it:
+
+```text
+/goldfish-onboard packages/billing
+```
+
+The onboarding workflow:
+
+- checks `memory_status` and existing memory first
+- reads at most 12 files / 4,000 lines
+- writes 10–15 cited nodes: one overview, 3–5 components, 3–5
+  decisions/patterns, and 3–5 gotchas/runbooks
+- uses the fixed `concept/project-overview` ID
+- marks source-backed claims `cited`, guesses `inferred`, and never uses
+  `verified` without a human or test
+- reports coverage and asks before expanding the first pass
+
+If memory is empty and you did not ask to onboard, the model should suggest
+`/goldfish-onboard` rather than writing unsolicited claims.
 
 ## What happens on a prompt
 
@@ -324,10 +354,11 @@ npm test
 npm run seed
 ```
 
-The 37 tests cover policy and glob matching, recall filters and budgets,
+The 42 tests cover policy and glob matching, recall filters and budgets,
 material revisions and supersession, multi-conflict forks, audit sampling and
 outcomes, export/import round-trips, plugin tool registration, auto-recall and
-fallback hooks, skill registration, and CLI end-to-end and error paths.
+fallback hooks, skill and command registration, onboarding status, and CLI
+end-to-end and error paths.
 
 ## Safety
 

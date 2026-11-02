@@ -6,7 +6,8 @@ import path from "node:path";
 import { createRuntime, type PluginContext, type Runtime } from "../src/plugin/runtime.ts";
 import { registerTools } from "../src/plugin/tools.ts";
 import { registerHooks } from "../src/plugin/hooks.ts";
-import { registerSkill, readSkillContent } from "../src/plugin/skill.ts";
+import { registerSkill, registerSkills, readSkillContent } from "../src/plugin/skill.ts";
+import { registerCommands } from "../src/plugin/commands.ts";
 import type { SessionContext, SessionPrompt } from "@opencode/plugin/promise/session";
 import type { ToolContext } from "@opencode/plugin/promise/tool";
 
@@ -19,6 +20,8 @@ interface Fake {
   removed: string[];
   permissions: any[];
   skills: any[];
+  commands: any[];
+  prompts: any[];
   disposals: number;
 }
 
@@ -35,6 +38,8 @@ function makeFake(options: {
   const removed: string[] = [];
   const permissions: any[] = [];
   const skills: any[] = [];
+  const commands: any[] = [];
+  const prompts: any[] = [];
   let disposals = 0;
   const registration = {
     dispose: async () => {
@@ -47,6 +52,10 @@ function makeFake(options: {
       if (name === "prompt") promptHooks.push(callback as never);
       else contextHooks.push(callback as never);
       return registration;
+    },
+    prompt: async (input: unknown) => {
+      prompts.push(input);
+      return {};
     },
   };
   if (options.withInstructions !== false) {
@@ -96,6 +105,12 @@ function makeFake(options: {
         return registration;
       },
     },
+    command: {
+      transform: async (callback: (editor: unknown) => void) => {
+        callback({ add: (command: unknown) => commands.push(command) });
+        return registration;
+      },
+    },
   } as unknown as PluginContext;
 
   return {
@@ -107,6 +122,8 @@ function makeFake(options: {
     removed,
     permissions,
     skills,
+    commands,
+    prompts,
     get disposals() {
       return disposals;
     },
@@ -155,7 +172,7 @@ test("registers agent tools and executes recall/get", async () => {
   await withPlugin(async (fake, runtime) => {
     const created = seed(runtime);
     await registerTools(fake.ctx, runtime);
-    assert.deepEqual([...fake.tools.keys()].sort(), ["get", "neighbors", "recall", "remember"]);
+    assert.deepEqual([...fake.tools.keys()].sort(), ["get", "neighbors", "recall", "remember", "status"]);
 
     const recall = fake.tools.get("recall")!;
     const recalled = await recall.execute({ query: "injection policy" }, toolContext);
@@ -164,6 +181,65 @@ test("registers agent tools and executes recall/get", async () => {
     const get = fake.tools.get("get")!;
     const detail = await get.execute({ id: created.node!.id }, toolContext);
     assert.match(String(detail.content), /## Sources/);
+  });
+});
+
+test("memory_status reports onboarding progress through empty, recommended, partial, and complete", async () => {
+  await withPlugin(async (fake, runtime) => {
+    await registerTools(fake.ctx, runtime);
+    const statusTool = fake.tools.get("status")!;
+    const status = async () => {
+      const result = await statusTool.execute({}, toolContext);
+      return { content: String(result.content), metadata: result.metadata as any };
+    };
+
+    const empty = await status();
+    assert.match(empty.content, /Onboarding: empty/);
+    assert.equal(empty.metadata.onboardingRecommended, true);
+
+    runtime.store.remember(
+      {
+        kind: "concept",
+        title: "Project overview",
+        body: "The project overview.",
+        citations: [{ type: "file", locator: "docs/decisions.md" }],
+      },
+      { author: { type: "system", id: "test" } },
+    );
+    const overviewOnly = await status();
+    assert.match(overviewOnly.content, /Onboarding: recommended/);
+    assert.equal(overviewOnly.metadata.overview, true);
+
+    runtime.store.remember(
+      {
+        kind: "component",
+        title: "Core component",
+        body: "The core component.",
+        citations: [{ type: "file", locator: "docs/decisions.md" }],
+        links: [{ to: "concept/project-overview", type: "part_of" }],
+      },
+      { author: { type: "system", id: "test" } },
+    );
+    const partial = await status();
+    assert.match(partial.content, /Onboarding: partial/);
+
+    seed(runtime, "Core decision");
+    const stillPartial = await status();
+    assert.match(stillPartial.content, /Onboarding: partial/);
+
+    runtime.store.remember(
+      {
+        kind: "gotcha",
+        title: "Core gotcha",
+        body: "The core gotcha.",
+        citations: [{ type: "file", locator: "docs/decisions.md" }],
+      },
+      { author: { type: "system", id: "test" } },
+    );
+    const complete = await status();
+    assert.match(complete.content, /Onboarding: complete/);
+    assert.equal(complete.metadata.state, "complete");
+    assert.equal(complete.metadata.onboardingRecommended, false);
   });
 });
 
@@ -320,4 +396,50 @@ test("skill registration reads the bundled skill and falls back when missing", a
   const fallback = readSkillContent("/definitely/not/a/real/SKILL.md");
   assert.equal(fallback.fallback, true);
   assert.match(fallback.content, /Project memory/);
+});
+
+test("registerSkills registers both the daily and onboarding skills", async () => {
+  await withPlugin(async (fake) => {
+    await registerSkills(fake.ctx);
+    assert.equal(fake.skills.length, 2);
+    const byID = new Map(fake.skills.map((skill) => [skill.id, skill]));
+    assert.equal(byID.has("project-memory"), true);
+    const onboarding = byID.get("goldfish-onboarding");
+    assert.equal(onboarding?.autoinvoke, true);
+    assert.match(onboarding?.content ?? "", /12 files/);
+    assert.match(onboarding?.content ?? "", /10–15/);
+    assert.match(onboarding?.content ?? "", /concept\/project-overview/);
+    assert.match(onboarding?.content ?? "", /exact title/);
+    assert.match(onboarding?.content ?? "", /suggest/i);
+    assert.match(onboarding?.content ?? "", /Write nothing/);
+  });
+});
+
+test("the onboarding command injects a scoped onboarding prompt", async () => {
+  await withPlugin(async (fake) => {
+    await registerCommands(fake.ctx);
+    assert.equal(fake.commands.length, 1);
+    const command = fake.commands[0];
+    assert.equal(command.name, "goldfish-onboard");
+
+    await command.execute({
+      sessionID: "ses_test",
+      prompt: { text: "packages/billing" },
+      delivery: "steer",
+    });
+    assert.equal(fake.prompts.length, 1);
+    const text = String(fake.prompts[0].text);
+    assert.match(text, /packages\/billing/);
+    assert.match(text, /goldfish-onboarding/);
+    assert.match(text, /12 files/);
+    assert.match(text, /concept\/project-overview/);
+    assert.match(text, /exact title/);
+
+    await command.execute({
+      sessionID: "ses_test",
+      prompt: { text: "   " },
+      delivery: "steer",
+    });
+    assert.match(String(fake.prompts[1].text), /Scope: whole project/);
+  });
 });

@@ -3,6 +3,7 @@ import type {
   MemoryCard,
   MemoryDetail,
   MemoryStats,
+  MemoryStatus,
   NeighborResult,
   RecallResult,
   RememberResult,
@@ -146,18 +147,37 @@ export function formatReview(items: ReviewItem[]): string {
   return lines.join("\n");
 }
 
+function countSection(label: string, values: Record<string, number>): string {
+  return `${label}: ${Object.entries(values)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}=${value}`)
+    .join(", ")}`;
+}
+
 export function formatStats(stats: MemoryStats): string {
-  const section = (label: string, values: Record<string, number>) =>
-    `${label}: ${Object.entries(values)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, value]) => `${key}=${value}`)
-      .join(", ")}`;
   return [
     `Nodes: ${stats.nodes.total}`,
-    section("Statuses", stats.statuses),
-    section("Bases", stats.bases),
-    section("Kinds", stats.kinds),
-    section("Verification", stats.verification),
+    countSection("Statuses", stats.statuses),
+    countSection("Bases", stats.bases),
+    countSection("Kinds", stats.kinds),
+    countSection("Verification", stats.verification),
     `Events: ${stats.events} · Injections: ${stats.injections} · Audits: ${stats.audits}`,
   ].join("\n");
+}
+
+export function formatMemoryStatus(status: MemoryStatus): string {
+  const lines = [
+    `Project memory: ${status.total} node${status.total === 1 ? "" : "s"}`,
+    countSection("Kinds", status.kinds),
+    countSection("Bases", status.bases),
+    countSection("Statuses", status.statuses),
+    `Overview: ${status.overview ? "present" : "missing"}`,
+    `Onboarding: ${status.state}`,
+  ];
+  if (status.state === "empty" || status.state === "recommended") {
+    lines.push("Suggested: /goldfish-onboard");
+  } else if (status.state === "partial") {
+    lines.push("Suggested: /goldfish-onboard to fill the missing categories");
+  }
+  return lines.join("\n");
 }

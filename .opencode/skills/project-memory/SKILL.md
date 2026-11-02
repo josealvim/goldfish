@@ -10,6 +10,12 @@ metadata:
 This project has a local knowledge base exposed through the `memory` tools. Use
 it to reduce exploratory file reads, not to replace verification reads.
 
+## New project or empty memory
+
+Call `memory_status` before a large planning task. If onboarding is `empty` or
+`recommended`, suggest `/goldfish-onboard`. If it is `partial`, suggest filling
+the missing categories. Do not run a full onboarding pass unless the user asks.
+
 ## Before planning unfamiliar work
 
 1. Call `memory_recall` with the domain terms and the paths or packages you

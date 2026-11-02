@@ -244,6 +244,18 @@ export interface MemoryStats {
   audits: number;
 }
 
+export type OnboardingState = "empty" | "recommended" | "partial" | "complete";
+
+export interface MemoryStatus {
+  total: number;
+  kinds: Record<string, number>;
+  bases: Record<string, number>;
+  statuses: Record<string, number>;
+  overview: boolean;
+  state: OnboardingState;
+  onboardingRecommended: boolean;
+}
+
 export interface ReviewItem {
   node: MemoryNode;
   reasons: string[];

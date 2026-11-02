@@ -1,5 +1,5 @@
 import type { Registration } from "@opencode/plugin/promise/registration";
-import { formatNeighbors, formatNode, formatRecall, formatRemember } from "../core/format.ts";
+import { formatMemoryStatus, formatNeighbors, formatNode, formatRecall, formatRemember } from "../core/format.ts";
 import { EDGE_TYPES, NODE_KINDS, SOURCE_TYPES } from "../core/types.ts";
 import type {
   EdgeType,
@@ -174,6 +174,12 @@ const neighborsSchema = {
   additionalProperties: false,
 } as const;
 
+const statusSchema = {
+  type: "object",
+  properties: {},
+  additionalProperties: false,
+} as const;
+
 export async function registerTools(ctx: PluginContext, runtime: Runtime): Promise<Registration> {
   return ctx.tool.transform((editor) => {
     editor.namespace({
@@ -303,6 +309,23 @@ export async function registerTools(ctx: PluginContext, runtime: Runtime): Promi
         return {
           content: result ? formatNeighbors(result) : `No memory node found for ${input.id}.`,
           metadata: result ? { found: true, count: result.neighbors.length } : { found: false },
+        };
+      },
+    });
+
+    editor.add({
+      name: "status",
+      description:
+        "Show project memory coverage and whether onboarding is recommended. Use before a large planning " +
+        "task or when checking whether the project has been onboarded. Reports counts by kind, basis, and " +
+        "status, plus the fixed project-overview node.",
+      input: statusSchema,
+      options: { namespace: "memory", codemode: false },
+      execute: async () => {
+        const status = runtime.store.status();
+        return {
+          content: formatMemoryStatus(status),
+          metadata: status,
         };
       },
     });
