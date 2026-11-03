@@ -8,11 +8,11 @@ import { registerTools } from "./tools.ts";
 export default Plugin.define({
   id: "goldfish.project-memory",
   async setup(ctx) {
+    const skills = await registerSkills(ctx);
+    const commands = await registerCommands(ctx);
     const runtime = await createRuntime(ctx);
     const tools = await registerTools(ctx, runtime);
     const cleanupHooks = await registerHooks(ctx, runtime);
-    const skills = await registerSkills(ctx);
-    const commands = await registerCommands(ctx);
     return async () => {
       await cleanupHooks();
       await commands.dispose();

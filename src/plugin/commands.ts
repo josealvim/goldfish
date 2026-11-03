@@ -1,6 +1,10 @@
 import type { Registration } from "@opencode/plugin/promise/registration";
 import type { PluginContext } from "./runtime.ts";
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export async function registerCommands(ctx: PluginContext): Promise<Registration> {
   try {
     return await ctx.command.transform((editor) => {
@@ -236,7 +240,9 @@ export async function registerCommands(ctx: PluginContext): Promise<Registration
       });
     });
   } catch (error) {
-    console.error("goldfish: could not register goldfish commands", error);
-    return { dispose: async () => {} };
+    throw new Error(
+      `goldfish: failed to register commands: ${errorMessage(error)}`,
+      { cause: error },
+    );
   }
 }

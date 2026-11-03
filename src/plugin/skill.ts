@@ -1,299 +1,182 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Skill } from "@opencode/plugin";
 import type { Registration } from "@opencode/plugin/promise/registration";
 import type { PluginContext } from "./runtime.ts";
 
-interface SkillSpec {
+export const SKILLS_ROOT = fileURLToPath(
+  new URL("../../.opencode/skills", import.meta.url),
+);
+
+export interface BundledSkill {
   id: string;
   name: string;
   description: string;
+  autoinvoke: boolean;
   path: string;
-  fallback: string;
+  content: string;
 }
 
-export const SKILL_PATH = fileURLToPath(
-  new URL("../../.opencode/skills/project-memory/SKILL.md", import.meta.url),
-);
-
-export const ONBOARDING_SKILL_PATH = fileURLToPath(
-  new URL("../../.opencode/skills/goldfish-onboarding/SKILL.md", import.meta.url),
-);
-
-export const VERIFICATION_SKILL_PATH = fileURLToPath(
-  new URL("../../.opencode/skills/goldfish-verification/SKILL.md", import.meta.url),
-);
-
-export const REPAIR_SKILL_PATH = fileURLToPath(
-  new URL("../../.opencode/skills/goldfish-repair/SKILL.md", import.meta.url),
-);
-
-export const LEARN_SKILL_PATH = fileURLToPath(
-  new URL("../../.opencode/skills/goldfish-learn/SKILL.md", import.meta.url),
-);
-
-export const FALLBACK_CONTENT = `# Project memory
-
-This project has a local knowledge base exposed through the \`memory\` tools.
-
-- Call \`memory_status\` before a large planning task. For an unfamiliar project,
-  call \`memory_scan\` to map manifests, entry points, docs, and candidate
-  components without writing memory. If onboarding is empty or recommended,
-  suggest \`/goldfish-onboard\`.
-- Check the project identity in \`memory_status\`. A stable Git ID lives in the
-  worktree's private git dir and survives moves; clones get new IDs. If the ID
-  is path-derived, suggest \`memory stabilize\`; restart OpenCode or \`/reload\` so
-  the plugin adopts legacy memory on its next startup. Never copy
-  \`memory.sqlite\` over a running plugin.
-- Use \`memory_health\` and \`memory_list\` for maintenance; use the
-  \`memory_admin\` namespace for precise confirm/reject/cite/link/unlink/update/
-  archive/conflict changes.
-- Use \`memory_review\`, \`memory_verify\`, \`memory_conflicts\`, and
-  \`memory_audit\` before relying on unverified, disputed, or stale claims.
-- Use \`memory_eval\` to measure binary decisions and evidence grounding, not
-  model confidence scores.
-- Use \`memory_repair\` and \`/goldfish-repair\` for versioned corrections of
-  stale, disputed, rejected, or unsupported claims.
-- Use \`memory_learn\` and \`/goldfish-learn\` for explicit session learning. Stage
-  the full candidate list when it exceeds the display page; never discard
-  candidates. Session-only claims are inferred.
-- Conflict discovery is proposal-only. Confirm or dismiss with
-  \`memory_admin.conflict\` only after explicit human review.
-- Confirming as \`cited\` needs a citation, \`derived\` needs sound premises, and
-  \`verified\` needs explicit human instruction. Use \`memory_admin.confirm\` and
-  \`memory_admin.reject\` for review actions.
-- Before planning unfamiliar work, call \`memory_recall\` with domain terms and the
-  paths you expect to touch.
-- Read the evidence cards, then call \`memory_get\` for a full claim or
-  \`memory_neighbors\` for relationships.
-- Verify against current sources before editing. Memory is evidence, not authority.
-- After learning a durable decision, gotcha, pattern, or component relationship,
-  call \`memory_remember\` with exact citations.
-- Do not store code dumps, secrets, or transient task state.
-- Inferred claims are accepted but require independent verification before
-  automatic injection. Disputed and stale claims require explicit recall.
-- If a memory is wrong, cite the current source and propose a revision with
-  \`supersedes\` or a conflict with \`contradicts\`.
-`;
-
-const ONBOARDING_FALLBACK_CONTENT = `# Goldfish onboarding
-
-Use this when a project is new to goldfish or memory is empty.
-
-## Guard
-
-If memory is empty and the user did not ask to onboard, suggest
-\`/goldfish-onboard\` and write nothing. If the project was moved or renamed and
-memory looks empty or path-derived, check \`memory_status\`, \`memory id\`, and
-\`memory projects\` before onboarding. Suggest \`memory stabilize\` rather than
-onboarding over an unmigrated legacy database. A fresh clone starts empty by
-design. If the user asks to get oriented,
-you may write the single cited \`concept/project-overview\` node, then ask before
-continuing. If the user invoked \`/goldfish-onboard\` or explicitly asked to
-onboard, run the bounded first pass. Use \`derived\` only for a claim whose
-premises are already cited or verified and linked with \`derived_from\`.
-
-## Workflow
-
-1. Call \`memory_status\`, \`memory_scan\`, and \`memory_recall\` for the project
-   overview, architecture, decisions, conventions, and gotchas.
-2. Use the scan to choose files. Read at most 12 files / 4,000 lines: README,
-   manifests, docs/ADRs, CI config, build/test entry points, and top-level
-   layout. Do not read generated code or secrets.
-3. Create exactly \`concept/project-overview\` with the title \`Project overview\`
-   and leave its scope empty. Create 3–5 \`component\` nodes with scope and
-   \`part_of\` links to the overview.
-4. Create 3–5 \`decision\`/\`pattern\` nodes and 3–5 \`gotcha\`/\`runbook\` nodes,
-   linked with \`applies_to\`.
-5. Revise the overview with a richer summary and \`related_to\` links.
-6. Validate with \`memory_recall\`, \`memory_neighbors\`, and \`memory_status\`.
-
-Write at most 10–15 new nodes in the first pass. Use \`cited\` for source-backed
-claims and \`inferred\` for guesses. A body is only \`cited\` if every sentence is
-supported by a citation. Never use \`verified\` without a human, test, or commit.
-When the user explicitly confirms a claim, use \`memory_admin.confirm as="verified"\`
-so the human citation is recorded. Cite exact files. Do not store code dumps,
-secrets, or transient state. Report what was stored, what is uncertain, and what
-should be confirmed next.
-`;
-
-const VERIFICATION_FALLBACK_CONTENT = `# Goldfish verification
-
-Use this when the user invokes \`/goldfish-verify\`, \`/goldfish-audit\`,
-\`/goldfish-conflicts\`, \`/goldfish-eval\`, or \`/goldfish-review\`, or before
-relying on an unverified, disputed, or stale claim.
-
-Call \`memory_review\` first, then \`memory_get\` for the claims that matter. Read
-the cited sources yourself. \`memory_verify\` runs deterministic checks and, when
-a model is configured, a rejection-leaning semantic verifier over bounded
-current-source windows. It may promote an inferred claim to \`cited\` or
-\`derived\`, mark a claim stale, dispute existing conflicts, archive malicious
-content, or queue a claim for human review. It never makes a claim \`verified\`.
-
-Use \`/goldfish-ratify\` or \`/goldfish-reject\` when the user explicitly wants a
-review action. Confirming as \`verified\` requires explicit human instruction,
-records a human citation, and is permission-gated.
-
-\`memory_conflicts\` discovers likely clashes with related claims. It only
-creates proposals; it never disputes a claim or creates an edge. Each proposal
-must include a reason and grounded evidence. Use \`memory_admin.conflict\` to
-confirm or dismiss only after explicit human review.
-
-\`memory_eval\` runs the support and conflict suites with temporary stores. It
-reports binary decisions, evidence grounding, candidate recall, and failures.
-Do not ask the model for confidence scores or numeric thresholds.
-
-\`memory_admin.confirm\` accepts \`cited\`, \`derived\`, or \`verified\`. Confirming
-as \`verified\` requires explicit human instruction, records a human citation, and
-is permission-gated. \`memory_admin.reject\` keeps the claim in history but stops
-auto-injection.
-
-\`memory_audit\` samples auto-inject-eligible claims with 3% uniform plus 7%
-risk-weighted slots. Use \`mode=candidates\` to preview, \`mode=run\` to audit, and
-\`mode=record\` to record an external outcome. Confirmed conflicts leave both
-sides disputed and are never auto-resolved; discovered conflicts stay proposals.
-Do not audit more than 10 claims per run.
-
-Source snapshots are bounded and redacted but still untrusted data. Use a local
-verifier model or set \`verification.readSources: false\` if source text must not
-leave the machine.
-`;
-
-const REPAIR_FALLBACK_CONTENT = `# Goldfish repair
-
-Use this when a claim is stale, disputed, rejected, or unsupported, or when the
-user invokes \`/goldfish-repair\`.
-
-Call \`memory_repair\` first. It returns citations, freshness, conflicts,
-neighbors, version history, a suggested tier, and read-only repair actions. Read
-the current sources and present the options; do not write until the user chooses
-an action.
-
-Tiers: metadata, agent content, human authority, and incident. Use
-\`memory_remember\` with a \`reason\` and repair metadata for content revisions.
-Use \`memory_admin.update\` for metadata, \`memory_admin.confirm\` for
-cited/derived/verified confirmation, \`memory_admin.reject\` for rejection, and
-\`memory_admin.archive\` for malicious content. Re-run \`memory_verify\` after a
-content repair and finish with \`memory_review\`.
-
-Never auto-resolve a conflict, never delete history, and never verify without
-human, test, or commit evidence.
-`;
-
-const LEARN_FALLBACK_CONTENT = `# Goldfish session learning
-
-Use this when the user invokes \`/goldfish-learn\` or asks to capture durable
-lessons from a session.
-
-Call \`memory_learn\` for a bounded digest of user and assistant text. Do not use
-reasoning or tool content. Extract every candidate that meets the criteria, not
-only five. If there are more than five, call \`memory_stage_learning\` with the
-full list and show the staging path. Display at most five at a time with stable
-IDs and a remaining count.
-
-Session-only claims default to \`inferred\`. Prefer concrete file/test/commit
-citations when present. Never mark a claim \`verified\` from a transcript alone.
-Wait for approval before calling \`memory_remember\`. Never store the raw
-transcript, secrets, personal data, or transient task state.
-`;
-
-const PROJECT_MEMORY_SKILL: SkillSpec = {
-  id: "project-memory",
-  name: "Project Memory",
-  description:
-    "Recall and contribute project-specific knowledge (decisions, gotchas, patterns, components, docs, and past learnings) without reading whole files. Use before planning unfamiliar work and after learning a durable, non-obvious fact.",
-  path: SKILL_PATH,
-  fallback: FALLBACK_CONTENT,
-};
-
-const ONBOARDING_SKILL: SkillSpec = {
-  id: "goldfish-onboarding",
-  name: "Goldfish Onboarding",
-  description:
-    "Bootstrap goldfish project memory in a project that is new to goldfish or has empty memory. Use when the user asks to onboard, get oriented, or establish project memory. Do not use for routine recall. Check memory_status first; if memory already has an overview and components, only fill gaps.",
-  path: ONBOARDING_SKILL_PATH,
-  fallback: ONBOARDING_FALLBACK_CONTENT,
-};
-
-const LEARN_SKILL: SkillSpec = {
-  id: "goldfish-learn",
-  name: "Goldfish Learn",
-  description:
-    "Extract reviewed, evidence-backed project knowledge from a bounded session digest. Use when the user invokes /goldfish-learn, wants to capture lessons from the current or a past session, or asks to mine a session for decisions, gotchas, commands, conventions, or relationships.",
-  path: LEARN_SKILL_PATH,
-  fallback: LEARN_FALLBACK_CONTENT,
-};
-
-const REPAIR_SKILL: SkillSpec = {
-  id: "goldfish-repair",
-  name: "Goldfish Repair",
-  description:
-    "Inspect and repair stale, disputed, rejected, or unsupported goldfish claims with versioned corrections. Use when the user invokes /goldfish-repair, when memory_health or memory_review shows a claim that needs correction, or after verification reports stale, contradicted, or insufficient evidence.",
-  path: REPAIR_SKILL_PATH,
-  fallback: REPAIR_FALLBACK_CONTENT,
-};
-
-const VERIFICATION_SKILL: SkillSpec = {
-  id: "goldfish-verification",
-  name: "Goldfish Verification",
-  description:
-    "Verify, audit, review, evaluate, discover conflicts, and apply human review actions in goldfish project-memory claims. Use when the user invokes /goldfish-verify, /goldfish-audit, /goldfish-conflicts, /goldfish-eval, /goldfish-review, /goldfish-ratify, or /goldfish-reject, when memory has unverified/disputed/stale claims, or before relying on a high-impact memory claim.",
-  path: VERIFICATION_SKILL_PATH,
-  fallback: VERIFICATION_FALLBACK_CONTENT,
-};
-
-function stripFrontmatter(value: string): string {
-  if (!value.startsWith("---")) return value;
-  const end = value.indexOf("\n---", 3);
-  if (end === -1) return value;
-  return value.slice(end + 4).trimStart();
+interface ParsedSkill {
+  name: string;
+  description: string;
+  autoinvoke: boolean;
+  body: string;
 }
 
-export function readSkillContent(
-  path = SKILL_PATH,
-  fallback = FALLBACK_CONTENT,
-): { content: string; fallback: boolean } {
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function unquote(value: string): string {
+  if (value.length < 2) return value;
+  if (value.startsWith('"') && value.endsWith('"')) return value.slice(1, -1);
+  if (value.startsWith("'") && value.endsWith("'")) return value.slice(1, -1);
+  return value;
+}
+
+function invalidFrontmatter(file: string, reason: string): Error {
+  return new Error(`goldfish: invalid skill frontmatter in ${file}: ${reason}`);
+}
+
+export function parseSkillFrontmatter(file: string, raw: string): ParsedSkill {
+  const text = raw.replace(/\r\n?/g, "\n");
+  const lines = text.split("\n");
+  if (lines[0] !== "---") {
+    throw invalidFrontmatter(file, 'expected a leading "---" line');
+  }
+  const closing = lines.indexOf("---", 1);
+  if (closing === -1) {
+    throw invalidFrontmatter(file, 'missing the closing "---" line');
+  }
+
+  let section = "";
+  let name: string | undefined;
+  let description: string | undefined;
+  let autoinvoke: boolean | undefined;
+
+  for (const line of lines.slice(1, closing)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const indent = line.length - line.trimStart().length;
+
+    if (indent === 0) {
+      const match = /^([A-Za-z0-9_-]+):[ \t]*(.*)$/.exec(line);
+      if (!match) throw invalidFrontmatter(file, `cannot parse line ${JSON.stringify(line)}`);
+      section = match[1]!;
+      const value = unquote(match[2]!.trim());
+
+      if (section === "name" || section === "description") {
+        if (!value) throw invalidFrontmatter(file, `missing ${section}`);
+        if (value.startsWith("|") || value.startsWith(">")) {
+          throw invalidFrontmatter(file, `multi-line ${section} is not supported`);
+        }
+        if (section === "name") name = value;
+        else description = value;
+      } else if (section === "metadata" && value) {
+        throw invalidFrontmatter(file, "metadata must be a block");
+      }
+      continue;
+    }
+
+    if (section === "metadata") {
+      const match = /^\s+([A-Za-z0-9_./-]+):[ \t]*(.*)$/.exec(line);
+      if (!match) throw invalidFrontmatter(file, `cannot parse metadata line ${JSON.stringify(line)}`);
+      if (match[1] === "opencode/autoinvoke") {
+        const value = unquote(match[2]!.trim());
+        if (value !== "true" && value !== "false") {
+          throw invalidFrontmatter(file, "metadata.opencode/autoinvoke must be true or false");
+        }
+        autoinvoke = value === "true";
+      }
+      continue;
+    }
+
+    if (section === "name" || section === "description") {
+      throw invalidFrontmatter(file, `multi-line ${section} is not supported`);
+    }
+  }
+
+  if (!name) throw invalidFrontmatter(file, "missing name");
+  if (!description) throw invalidFrontmatter(file, "missing description");
+  if (autoinvoke === undefined) {
+    throw invalidFrontmatter(file, "missing metadata.opencode/autoinvoke");
+  }
+
+  const body = lines.slice(closing + 1).join("\n").trimStart();
+  if (!body) throw invalidFrontmatter(file, "empty skill body");
+  return { name, description, autoinvoke, body };
+}
+
+function readSkillFile(file: string): string {
   try {
-    return { content: stripFrontmatter(readFileSync(path, "utf8")), fallback: false };
-  } catch {
-    return { content: fallback, fallback: true };
+    return readFileSync(file, "utf8");
+  } catch (error) {
+    throw new Error(`goldfish: cannot read skill file ${file}: ${errorMessage(error)}`, {
+      cause: error,
+    });
   }
 }
 
-async function registerSpecs(ctx: PluginContext, specs: SkillSpec[]): Promise<Registration> {
+function loadSkill(root: string, id: string): BundledSkill {
+  const file = path.join(root, id, "SKILL.md");
+  const parsed = parseSkillFrontmatter(file, readSkillFile(file));
+  return {
+    id,
+    name: parsed.name,
+    description: parsed.description,
+    autoinvoke: parsed.autoinvoke,
+    path: file,
+    content: parsed.body,
+  };
+}
+
+/**
+ * Discover bundled skills from the filesystem.
+ *
+ * The skill directory name is the ID. The SKILL.md frontmatter is the only
+ * source for name, description, and autoinvoke; no fallback text is embedded in
+ * TypeScript. Any missing or malformed skill is an error.
+ */
+export function discoverSkills(root: string = SKILLS_ROOT): BundledSkill[] {
+  let entries;
+  try {
+    entries = readdirSync(root, { withFileTypes: true });
+  } catch (error) {
+    throw new Error(
+      `goldfish: cannot read bundled skills directory ${root}: ${errorMessage(error)}`,
+      { cause: error },
+    );
+  }
+
+  const ids = entries
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
+  if (!ids.length) throw new Error(`goldfish: no bundled skills found in ${root}`);
+  return ids.map((id) => loadSkill(root, id));
+}
+
+export async function registerSkills(ctx: PluginContext): Promise<Registration> {
+  const skills = discoverSkills();
   try {
     return await ctx.skill.transform((editor) => {
-      for (const spec of specs) {
-        const loaded = readSkillContent(spec.path, spec.fallback);
-        if (loaded.fallback) {
-          console.error(`goldfish: could not read the ${spec.id} skill file; using the embedded fallback`);
-        }
+      for (const skill of skills) {
         editor.add({
-          id: Skill.ID.make(spec.id),
-          name: Skill.Name.make(spec.name),
-          description: spec.description,
-          autoinvoke: true,
-          path: Skill.Info.fields.path.make(spec.path),
-          content: loaded.content,
+          id: Skill.ID.make(skill.id),
+          name: Skill.Name.make(skill.name),
+          description: skill.description,
+          autoinvoke: skill.autoinvoke,
+          path: Skill.Info.fields.path.make(skill.path),
+          content: skill.content,
         } as never);
       }
     });
   } catch (error) {
-    console.error("goldfish: could not register project skills", error);
-    return { dispose: async () => {} };
+    throw new Error(
+      `goldfish: failed to register bundled skills: ${errorMessage(error)}`,
+      { cause: error },
+    );
   }
-}
-
-export async function registerSkill(ctx: PluginContext): Promise<Registration> {
-  return registerSpecs(ctx, [PROJECT_MEMORY_SKILL]);
-}
-
-export async function registerSkills(ctx: PluginContext): Promise<Registration> {
-  return registerSpecs(ctx, [
-    PROJECT_MEMORY_SKILL,
-    ONBOARDING_SKILL,
-    VERIFICATION_SKILL,
-    REPAIR_SKILL,
-    LEARN_SKILL,
-  ]);
 }

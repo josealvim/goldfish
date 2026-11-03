@@ -43,7 +43,7 @@ No npm publish is required. The package is installed directly from Git.
 opencode plugin add github:josealvim/goldfish
 
 # Pin a release tag
-opencode plugin add github:josealvim/goldfish#v0.13.0
+opencode plugin add github:josealvim/goldfish#v0.13.1
 ```
 
 Or clone the repository and run the installer:
@@ -78,9 +78,13 @@ If a project already has the local development wrapper at
 Git plugin in that same project. OpenCode will list both copies. Use one or the
 other: the local wrapper for development, the Git install for consumption.
 
-The plugin registers the `project-memory`, `goldfish-onboarding`, and
-`goldfish-verification` skills itself, so no project-local skill is required. A
-plain clone works without `npm install`: OpenCode provides `@opencode/plugin`,
+The plugin registers the bundled skills from `.opencode/skills/*/SKILL.md`
+itself, so no project-local skill is required. The directory name is the skill
+ID; `name`, `description`, and `opencode/autoinvoke` come from the frontmatter.
+If a discovered skill file is unreadable or malformed, plugin setup fails with
+the file path instead of loading embedded fallback text. The test suite asserts
+the expected bundled skill set so a missing directory is caught before release.
+A plain clone works without `npm install`: OpenCode provides `@opencode/plugin`,
 and the plugin entry is ordinary TypeScript. Restart OpenCode or run `/reload`,
 then verify with:
 

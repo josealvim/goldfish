@@ -6,7 +6,7 @@ import path from "node:path";
 import { createRuntime, type PluginContext, type Runtime } from "../src/plugin/runtime.ts";
 import { registerTools } from "../src/plugin/tools.ts";
 import { registerHooks } from "../src/plugin/hooks.ts";
-import { registerSkill, registerSkills, readSkillContent } from "../src/plugin/skill.ts";
+import { discoverSkills, registerSkills } from "../src/plugin/skill.ts";
 import { registerCommands } from "../src/plugin/commands.ts";
 import type { SessionContext, SessionPrompt } from "@opencode/plugin/promise/session";
 import type { ToolContext } from "@opencode/plugin/promise/tool";
@@ -948,30 +948,102 @@ test("auto-recall excludes inferred claims and includes cited claims", async () 
   });
 });
 
-test("skill registration reads the bundled skill and falls back when missing", async () => {
-  await withPlugin(async (fake) => {
-    await registerSkill(fake.ctx);
-    assert.equal(fake.skills.length, 1);
-    const skill = fake.skills[0];
-    assert.equal(skill.id, "project-memory");
-    assert.equal(skill.autoinvoke, true);
-    assert.match(skill.content, /Before planning unfamiliar work/);
-    assert.match(skill.content, /memory stabilize/);
-    assert.match(skill.content, /path-derived/);
-    assert.doesNotMatch(skill.content, /^---/);
-  });
+test("bundled skills are discovered from SKILL.md frontmatter", () => {
+  const skills = discoverSkills();
+  assert.deepEqual(skills.map((skill) => skill.id).sort(), [
+    "goldfish-learn",
+    "goldfish-onboarding",
+    "goldfish-repair",
+    "goldfish-verification",
+    "project-memory",
+  ]);
+  const projectMemory = skills.find((skill) => skill.id === "project-memory")!;
+  assert.equal(projectMemory.name, "Project Memory");
+  assert.match(projectMemory.description, /Recall and contribute project-specific knowledge/);
+  assert.equal(projectMemory.autoinvoke, true);
+  assert.match(projectMemory.content, /Before planning unfamiliar work/);
+  assert.match(projectMemory.content, /memory stabilize/);
+  assert.match(projectMemory.content, /path-derived/);
+  assert.doesNotMatch(projectMemory.content, /^---/);
+});
 
-  const fallback = readSkillContent("/definitely/not/a/real/SKILL.md");
-  assert.equal(fallback.fallback, true);
-  assert.match(fallback.content, /Project memory/);
-  assert.match(fallback.content, /memory_conflicts/);
-  assert.match(fallback.content, /memory_eval/);
-  assert.match(fallback.content, /memory_repair/);
-  assert.match(fallback.content, /memory_scan/);
-  assert.match(fallback.content, /memory_learn/);
-  assert.match(fallback.content, /memory_admin\.confirm/);
-  assert.match(fallback.content, /memory stabilize/);
-  assert.match(fallback.content, /path-derived/);
+test("skill discovery rejects missing and malformed files", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "goldfish-skills-"));
+  const writeSkill = (base: string, id: string, content: string): void => {
+    mkdirSync(path.join(base, id), { recursive: true });
+    writeFileSync(path.join(base, id, "SKILL.md"), content);
+  };
+  try {
+    assert.throws(
+      () => discoverSkills(path.join(root, "missing-directory")),
+      /cannot read bundled skills directory/,
+    );
+
+    const empty = path.join(root, "empty");
+    mkdirSync(empty);
+    assert.throws(() => discoverSkills(empty), /no bundled skills found/);
+
+    const missingFile = path.join(root, "missing-file");
+    mkdirSync(path.join(missingFile, "broken"), { recursive: true });
+    assert.throws(() => discoverSkills(missingFile), /cannot read skill file/);
+
+    const malformed = path.join(root, "malformed");
+    writeSkill(
+      malformed,
+      "broken",
+      "---\nname: Broken\nmetadata:\n  opencode/autoinvoke: true\n---\n# Broken\n",
+    );
+    assert.throws(() => discoverSkills(malformed), /missing description/);
+
+    const badAutoinvoke = path.join(root, "bad-autoinvoke");
+    writeSkill(
+      badAutoinvoke,
+      "broken",
+      "---\nname: Broken\ndescription: Broken.\nmetadata:\n  opencode/autoinvoke: yes\n---\n# Broken\n",
+    );
+    assert.throws(() => discoverSkills(badAutoinvoke), /opencode\/autoinvoke must be true or false/);
+
+    const valid = path.join(root, "valid");
+    writeSkill(
+      valid,
+      "test-skill",
+      "---\nname: Test Skill\ndescription: A test skill: yes.\nmetadata:\n  opencode/autoinvoke: false\n---\n# Test\n",
+    );
+    const [skill] = discoverSkills(valid);
+    assert.equal(skill?.id, "test-skill");
+    assert.equal(skill?.name, "Test Skill");
+    assert.equal(skill?.description, "A test skill: yes.");
+    assert.equal(skill?.autoinvoke, false);
+    assert.equal(skill?.content.trim(), "# Test");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("skill and command registration failures propagate", async () => {
+  const skillContext = {
+    skill: {
+      transform: async () => {
+        throw new Error("skill boom");
+      },
+    },
+  } as unknown as PluginContext;
+  await assert.rejects(
+    () => registerSkills(skillContext),
+    /failed to register bundled skills: skill boom/,
+  );
+
+  const commandContext = {
+    command: {
+      transform: async () => {
+        throw new Error("command boom");
+      },
+    },
+  } as unknown as PluginContext;
+  await assert.rejects(
+    () => registerCommands(commandContext),
+    /failed to register commands: command boom/,
+  );
 });
 
 test("registerSkills registers the daily, onboarding, verification, repair, and learn skills", async () => {
@@ -979,7 +1051,8 @@ test("registerSkills registers the daily, onboarding, verification, repair, and 
     await registerSkills(fake.ctx);
     assert.equal(fake.skills.length, 5);
     const byID = new Map(fake.skills.map((skill) => [skill.id, skill]));
-    assert.equal(byID.has("project-memory"), true);
+    assert.equal(byID.get("project-memory")?.name, "Project Memory");
+    assert.match(byID.get("project-memory")?.description ?? "", /Recall and contribute/);
     const onboarding = byID.get("goldfish-onboarding");
     assert.equal(onboarding?.autoinvoke, true);
     assert.match(onboarding?.content ?? "", /12 files/);

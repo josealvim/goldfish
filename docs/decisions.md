@@ -28,6 +28,17 @@ DOT, and a single-file HTML explorer share that model. The HTML file embeds its
 data, styles, and vanilla JavaScript and makes no network requests, so it works
 offline through `file://`.
 
+## Bundled skills have one source of truth
+
+The bundled skills live only in `.opencode/skills/*/SKILL.md`. At setup the
+plugin discovers the directories, uses each directory name as the skill ID, and
+derives `name`, `description`, and `opencode/autoinvoke` from the frontmatter.
+The remaining body is registered as the skill content. There are no embedded
+skill copies in TypeScript. A discovered skill file that is unreadable or
+malformed is a setup error that includes the file path; the plugin does not fall
+back to stale text or silently skip the skill. Tests assert the expected bundled
+skill set so a missing directory is caught before release.
+
 ## Optimistic writes, earned injection
 
 Agents may write claims freely, but auto-injection is earned. `verified`,
