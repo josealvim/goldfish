@@ -1,3 +1,4 @@
+import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Registration } from "@opencode/plugin/promise/registration";
@@ -10,6 +11,14 @@ import {
   runConflictEval,
   runSupportEval,
 } from "../core/eval.ts";
+import {
+  buildMemoryGraph,
+  GRAPH_FORMATS,
+  inferGraphFormat,
+  isGraphFormat,
+  renderGraph,
+  type GraphFormat,
+} from "../core/graph/index.ts";
 import { buildRepairPacket, formatRepairPacket } from "../core/repair.ts";
 import { formatProjectScan, scanProject } from "../core/scan.ts";
 import {
@@ -560,6 +569,21 @@ const stageLearningSchema = {
   additionalProperties: false,
 } as const;
 
+const exportGraphSchema = {
+  type: "object",
+  properties: {
+    format: { type: "string", enum: [...GRAPH_FORMATS] },
+    out: {
+      type: "string",
+      description:
+        "Output path, relative to the project root. Defaults to .opencode/memory/graph.<format>.",
+    },
+    activeOnly: { type: "boolean", description: "Only include nodes with status active." },
+    includeRetired: { type: "boolean", description: "Include retired edges." },
+  },
+  additionalProperties: false,
+} as const;
+
 const auditSchema = {
   type: "object",
   properties: {
@@ -880,6 +904,59 @@ export async function registerTools(ctx: PluginContext, runtime: Runtime): Promi
         return {
           content: `Staged ${result.count} candidate(s) at ${result.path}.`,
           metadata: result,
+        };
+      },
+    });
+
+    editor.add({
+      name: "export_graph",
+      description:
+        "Export a deterministic graph of project memory as JSON, GraphML, DOT, or a self-contained offline " +
+        "HTML explorer. Writes a file and returns its path, format, node count, and edge count.",
+      input: exportGraphSchema,
+      options: { namespace: "memory", codemode: false },
+      execute: async (raw, context) => {
+        const input = (raw ?? {}) as {
+          format?: string;
+          out?: string;
+          activeOnly?: boolean;
+          includeRetired?: boolean;
+        };
+        const requested = input.format?.toLowerCase();
+        if (requested && !isGraphFormat(requested)) {
+          throw new Error(`Unknown graph format: ${requested}. Use ${GRAPH_FORMATS.join(", ")}.`);
+        }
+        const inferred = inferGraphFormat(input.out);
+        const format: GraphFormat =
+          (requested as GraphFormat | undefined) ??
+          inferred ??
+          (input.out ? "json" : "html");
+        const relativeOut = input.out ?? path.join(".opencode", "memory", `graph.${format}`);
+        const target = path.resolve(runtime.projectRoot, relativeOut);
+        await assertWrite(ctx, runtime, context, "memory.exportGraph", [target]);
+
+        const includeRetired = input.includeRetired === true;
+        const activeOnly = input.activeOnly === true;
+        const graph = buildMemoryGraph(runtime.store.graphSnapshot({ includeRetired }), {
+          activeOnly,
+          includeRetired,
+        });
+        const content = renderGraph(graph, format);
+        mkdirSync(path.dirname(target), { recursive: true });
+        writeFileSync(target, content, "utf8");
+        return {
+          content:
+            `Exported ${format} graph to ${target} (` +
+            `${graph.nodes.length} node${graph.nodes.length === 1 ? "" : "s"}, ` +
+            `${graph.edges.length} edge${graph.edges.length === 1 ? "" : "s"}).`,
+          metadata: {
+            format,
+            path: target,
+            nodes: graph.nodes.length,
+            edges: graph.edges.length,
+            activeOnly,
+            includeRetired,
+          },
         };
       },
     });

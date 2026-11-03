@@ -14,6 +14,14 @@ import {
   gitProjectAnchor,
   resolveProjectIdentity,
 } from "../core/project-identity.ts";
+import {
+  buildMemoryGraph,
+  GRAPH_FORMATS,
+  inferGraphFormat,
+  isGraphFormat,
+  renderGraph,
+  type GraphFormat,
+} from "../core/graph/index.ts";
 import { importBundle, type ImportBundle } from "../core/import.ts";
 import {
   formatMemoryHealth,
@@ -603,6 +611,42 @@ async function main(): Promise<void> {
       return;
     }
 
+    case "graph": {
+      const out = flag(args, "out") ?? args.positionals[0];
+      const formatFlag = flag(args, "format")?.toLowerCase();
+      let format: GraphFormat;
+      if (formatFlag) {
+        if (!isGraphFormat(formatFlag)) {
+          throw new Error(
+            `Unknown graph format: ${formatFlag}. Use ${GRAPH_FORMATS.join(", ")}.`,
+          );
+        }
+        format = formatFlag;
+      } else {
+        format = inferGraphFormat(out) ?? "json";
+      }
+      const activeOnly = boolFlag(args, "active-only");
+      const includeRetired = boolFlag(args, "include-retired");
+      await withStore(args, (store) => {
+        const graph = buildMemoryGraph(store.graphSnapshot({ includeRetired }), {
+          activeOnly,
+          includeRetired,
+        });
+        const content = renderGraph(graph, format);
+        if (!out || out === "-") {
+          process.stdout.write(content);
+          return;
+        }
+        const target = path.resolve(out);
+        mkdirSync(path.dirname(target), { recursive: true });
+        writeFileSync(target, content, "utf8");
+        console.log(
+          `Wrote ${format} graph to ${target} (${nodeWord(graph.nodes.length)}, ${graph.edges.length} edge${graph.edges.length === 1 ? "" : "s"})`,
+        );
+      });
+      return;
+    }
+
     case "eval": {
       const file = args.positionals[0] ?? "test/fixtures/eval.jsonl";
       const cases = readJsonLines(file).map((value, index) => {
@@ -714,6 +758,8 @@ Commands:
   audit-record <id> --outcome <outcome> [--trigger manual]
   eval [file]                     Evaluate recall@k against a JSONL suite
   export [directory]              Write a JSONL export bundle
+  graph [--format <fmt>] [--out <path>]
+                                  Export a deterministic graph (json, graphml, dot, html)
   import [directory]              Merge an exported JSONL bundle
   stats                           Show store counts
 
@@ -723,6 +769,10 @@ Common options:
   --now                           Copy legacy memory immediately during stabilize
   --from-db <path>                Adopt a specific database during stabilize --now
   --dry-run                       Show what stabilize would do
+  --format <fmt>                  Graph format: json, graphml, dot, html
+  --out <path>                    Output path (export directory or graph file; - = stdout)
+  --active-only                   Only include nodes with status active
+  --include-retired               Include retired edges
   --scope <glob>                  Scope filter (repeatable)
   --limit <n>                     Result limit
   --budget <tokens>               Approximate token budget

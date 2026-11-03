@@ -43,7 +43,7 @@ No npm publish is required. The package is installed directly from Git.
 opencode plugin add github:josealvim/goldfish
 
 # Pin a release tag
-opencode plugin add github:josealvim/goldfish#v0.12.0
+opencode plugin add github:josealvim/goldfish#v0.13.0
 ```
 
 Or clone the repository and run the installer:
@@ -151,6 +151,7 @@ npm run memory -- recall "how does injection work?"
 | `memory_get` | Read a node in full, including citations, relationships, and version history. |
 | `memory_neighbors` | Walk the knowledge graph one or two hops. |
 | `memory_status` | Show memory coverage, project identity, database path, and whether onboarding is recommended. |
+| `memory_export_graph` | Export a deterministic JSON, GraphML, DOT, or offline HTML graph file. |
 | `memory_scan` | Read-only structural scan: layout, manifests, scripts, candidate components, entry points, docs headings, CI, and Git metadata. |
 | `memory_learn` | Read a bounded, redacted digest of user and assistant session text. Read-only. |
 | `memory_stage_learning` | Stage the full session-learning candidate list in a local review file without writing memory. |
@@ -313,6 +314,7 @@ The plugin also registers the corresponding commands:
 
 ```text
 /goldfish-scan [scope]       map the repository without writing memory
+/goldfish-graph [format]     export a deterministic graph or offline explorer
 /goldfish-learn [session]    digest a session and propose durable candidates
 /goldfish-review [scope]     show the review queue
 /goldfish-verify [target]    verify up to 5 claims
@@ -391,6 +393,12 @@ npm run memory -- audit-record gotcha/example --outcome supported --trigger manu
 npm run memory -- export .opencode/memory/export
 npm run memory -- import .opencode/memory/export
 
+# Graph exports
+npm run memory -- graph --format json --out .opencode/memory/graph.json
+npm run memory -- graph --format graphml --out .opencode/memory/graph.graphml
+npm run memory -- graph --format dot --out .opencode/memory/graph.dot
+npm run memory -- graph --format html --out .opencode/memory/graph.html
+
 # Evaluate recall against the local suite
 npm run memory -- eval
 ```
@@ -398,6 +406,35 @@ npm run memory -- eval
 `remember --json` accepts an inline JSON object or a file path. `seed` accepts a
 JSONL file of proposals; see `test/fixtures/seed.jsonl`. CLI `eval` measures
 recall only.
+
+## Graph exports
+
+`graph` writes a deterministic graph from the same SQLite store as the rest of
+goldfish. It supports JSON, GraphML, DOT, and a fully offline single-file HTML
+explorer. The file format is inferred from `--out` when `--format` is omitted;
+without `--out`, output goes to stdout.
+
+By default the graph includes every node and every current edge. Use
+`--active-only` to keep only nodes whose status is `active`, and
+`--include-retired` to include retired edges with their retirement time.
+
+The exports use stable node/edge ordering, fixed key order, and no export
+timestamp, current date, or random layout. The same database state produces
+byte-identical files. JSON and GraphML include node bodies; DOT uses compact
+labels; HTML embeds the graph data, CSS, and JavaScript in one file with no
+network requests. Open the HTML file directly in a browser; no server is
+required.
+
+Inside OpenCode, `/goldfish-graph` uses the `memory_export_graph` tool. Pass a
+format, and optionally a path and flags:
+
+```text
+/goldfish-graph
+/goldfish-graph html
+/goldfish-graph json .opencode/memory/graph.json
+/goldfish-graph html --active-only
+/goldfish-graph graphml --include-retired
+```
 
 ## Verifier evaluation
 
@@ -630,7 +667,8 @@ relationship, or the edge is a conflict/supersession edge.
 
 ```text
 src/core/        storage, schema, policy, recall, verification, conflicts,
-                 source snapshots, formatting, export
+                 source snapshots, formatting, export, deterministic graph
+                 exports (JSON, GraphML, DOT, offline HTML)
 src/cli/         CLI entry point
 src/plugin/      OpenCode plugin, tools, hooks, runtime
 .opencode/       local plugin wrapper and project-memory skill
@@ -681,6 +719,7 @@ snapshots and redaction, citation freshness, derived cycles and premise
 soundness, verifier verdicts and caching, conflict candidate retrieval,
 proposal lifecycle, conflict confirmation, audit sampling and outcomes,
 export/import round-trips, stable project identity and legacy adoption,
+deterministic graph exports across JSON, GraphML, DOT, and offline HTML,
 observe/edit operations, plugin tool registration, auto-recall and fallback
 hooks, skill and command registration, onboarding status, and CLI end-to-end and
 error paths.

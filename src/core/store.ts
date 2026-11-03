@@ -59,6 +59,7 @@ import {
 } from "./ids.ts";
 import { anyScopeMatches, scopeMatchScore } from "./glob.ts";
 import { DEFAULT_POLICY, effectiveAllowedBasis, isAutoInjectEligible, type InjectionPolicy } from "./policy.ts";
+import type { MemoryGraphSnapshot } from "./graph/types.ts";
 import { initSchema } from "./schema.ts";
 import { ensureParent } from "./paths.ts";
 import {
@@ -2334,6 +2335,23 @@ export class MemoryStore {
         );
       });
     });
+  }
+
+  graphSnapshot(options: { includeRetired?: boolean } = {}): MemoryGraphSnapshot {
+    const nodes = this.db
+      .prepare("SELECT * FROM nodes ORDER BY id")
+      .all()
+      .map((row) => this.rowToNode(row));
+    const retiredClause = options.includeRetired ? "" : "WHERE retired_at IS NULL";
+    const edges = this.db
+      .prepare(`SELECT * FROM edges ${retiredClause} ORDER BY from_id, to_id, type, id`)
+      .all()
+      .map((row) => this.rowToEdge(row));
+    return {
+      ...(this.projectId ? { projectId: this.projectId } : {}),
+      nodes,
+      edges,
+    };
   }
 
   exportBundle(): ExportBundle {

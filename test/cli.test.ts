@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -157,6 +157,67 @@ test("CLI creates a stable project ID and adopts legacy memory", { timeout: 120_
     assert.match(String(projects.stdout), /stable/);
     assert.match(String(projects.stdout), /legacy/);
     assert.equal(existsSync(legacy), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("CLI graph exports infer formats and are deterministic", { timeout: 120_000 }, () => {
+  const root = mkdtempSync(path.join(tmpdir(), "goldfish-cli-graph-"));
+  const db = path.join(root, "memory.sqlite");
+  const jsonA = path.join(root, "graph-a.json");
+  const jsonB = path.join(root, "graph-b.json");
+  const htmlPath = path.join(root, "explorer.html");
+  try {
+    const seeded = runCli(["seed", "test/fixtures/seed.jsonl", "--db", db, "--project", repoRoot]);
+    assertOk(seeded);
+
+    const first = runCli([
+      "graph",
+      "--format",
+      "json",
+      "--out",
+      jsonA,
+      "--db",
+      db,
+      "--project",
+      repoRoot,
+    ]);
+    assertOk(first);
+    const second = runCli([
+      "graph",
+      "--format",
+      "json",
+      "--out",
+      jsonB,
+      "--db",
+      db,
+      "--project",
+      repoRoot,
+    ]);
+    assertOk(second);
+    assert.equal(readFileSync(jsonA, "utf8"), readFileSync(jsonB, "utf8"));
+
+    const html = runCli(["graph", "--out", htmlPath, "--db", db, "--project", repoRoot]);
+    assertOk(html);
+    assert.match(String(html.stdout), /Wrote html graph/);
+    assert.match(readFileSync(htmlPath, "utf8"), /^<!doctype html>/);
+
+    const dot = runCli(["graph", "--format", "dot", "--db", db, "--project", repoRoot]);
+    assertOk(dot);
+    assert.match(String(dot.stdout), /^digraph goldfish \{/);
+
+    const invalid = runCli([
+      "graph",
+      "--format",
+      "yaml",
+      "--db",
+      db,
+      "--project",
+      repoRoot,
+    ]);
+    assert.equal(invalid.status, 1);
+    assert.match(String(invalid.stderr), /Unknown graph format/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createRuntime, type PluginContext, type Runtime } from "../src/plugin/runtime.ts";
@@ -220,6 +220,7 @@ test("registers agent tools and executes recall/get", async () => {
       "conflict",
       "conflicts",
       "eval",
+      "export_graph",
       "get",
       "health",
       "learn",
@@ -246,6 +247,34 @@ test("registers agent tools and executes recall/get", async () => {
     const get = fake.tools.get("get")!;
     const detail = await get.execute({ id: created.node!.id }, toolContext);
     assert.match(String(detail.content), /## Sources/);
+  });
+});
+
+test("memory_export_graph writes a deterministic offline explorer", async () => {
+  await withPlugin(async (fake, runtime) => {
+    seed(runtime);
+    await registerTools(fake.ctx, runtime);
+    const tool = fake.tools.get("export_graph")!;
+    const first = await tool.execute({ format: "html" }, toolContext);
+    const targetPath = String((first.metadata as any).path);
+    assert.equal(existsSync(targetPath), true);
+    assert.equal((first.metadata as any).format, "html");
+    assert.equal((first.metadata as any).nodes, 1);
+    const html = readFileSync(targetPath, "utf8");
+    assert.match(html, /^<!doctype html>/);
+    assert.match(html, /id="goldfish-data"/);
+    assert.doesNotMatch(html, /<script[^>]+src=/i);
+
+    const second = await tool.execute({ format: "html" }, toolContext);
+    assert.equal(readFileSync(String((second.metadata as any).path), "utf8"), html);
+
+    const json = await tool.execute(
+      { out: path.join(".opencode", "memory", "graph.json") },
+      toolContext,
+    );
+    assert.equal((json.metadata as any).format, "json");
+    const parsed = JSON.parse(readFileSync(String((json.metadata as any).path), "utf8"));
+    assert.equal(parsed.nodes.length, 1);
   });
 });
 
@@ -991,6 +1020,7 @@ test("the onboarding command injects a scoped onboarding prompt", async () => {
       [
         "goldfish-onboard",
         "goldfish-scan",
+        "goldfish-graph",
         "goldfish-learn",
         "goldfish-verify",
         "goldfish-audit",
@@ -1034,71 +1064,79 @@ test("the onboarding command injects a scoped onboarding prompt", async () => {
 
     await fake.commands[2].execute({
       sessionID: "ses_test",
+      prompt: { text: "html" },
+      delivery: "steer",
+    });
+    assert.match(String(fake.prompts[3].text), /memory_export_graph/);
+    assert.match(String(fake.prompts[3].text), /offline HTML/);
+
+    await fake.commands[3].execute({
+      sessionID: "ses_test",
       prompt: { text: "ses_test" },
       delivery: "steer",
     });
-    assert.match(String(fake.prompts[3].text), /memory_learn/);
-    assert.match(String(fake.prompts[3].text), /ses_test/);
+    assert.match(String(fake.prompts[4].text), /memory_learn/);
+    assert.match(String(fake.prompts[4].text), /ses_test/);
 
-    await fake.commands[3].execute({
+    await fake.commands[4].execute({
       sessionID: "ses_test",
       prompt: { text: "decision/billing" },
       delivery: "steer",
     });
-    assert.match(String(fake.prompts[4].text), /memory_verify/);
-    assert.match(String(fake.prompts[4].text), /decision\/billing/);
+    assert.match(String(fake.prompts[5].text), /memory_verify/);
+    assert.match(String(fake.prompts[5].text), /decision\/billing/);
 
-    await fake.commands[4].execute({
+    await fake.commands[5].execute({
       sessionID: "ses_test",
       prompt: { text: "" },
       delivery: "steer",
     });
-    assert.match(String(fake.prompts[5].text), /memory_audit/);
+    assert.match(String(fake.prompts[6].text), /memory_audit/);
 
-    await fake.commands[5].execute({
+    await fake.commands[6].execute({
       sessionID: "ses_test",
       prompt: { text: "decision/example" },
       delivery: "steer",
     });
-    assert.match(String(fake.prompts[6].text), /memory_conflicts/);
-    assert.match(String(fake.prompts[6].text), /decision\/example/);
+    assert.match(String(fake.prompts[7].text), /memory_conflicts/);
+    assert.match(String(fake.prompts[7].text), /decision\/example/);
 
-    await fake.commands[6].execute({
+    await fake.commands[7].execute({
       sessionID: "ses_test",
       prompt: { text: "support" },
       delivery: "steer",
     });
-    assert.match(String(fake.prompts[7].text), /memory_eval/);
-    assert.match(String(fake.prompts[7].text), /support/);
+    assert.match(String(fake.prompts[8].text), /memory_eval/);
+    assert.match(String(fake.prompts[8].text), /support/);
 
-    await fake.commands[7].execute({
+    await fake.commands[8].execute({
       sessionID: "ses_test",
       prompt: { text: "" },
       delivery: "steer",
     });
-    assert.match(String(fake.prompts[8].text), /memory_review/);
+    assert.match(String(fake.prompts[9].text), /memory_review/);
 
-    await fake.commands[8].execute({
+    await fake.commands[9].execute({
       sessionID: "ses_test",
       prompt: { text: "decision/example" },
       delivery: "steer",
     });
-    assert.match(String(fake.prompts[9].text), /memory_repair/);
-    assert.match(String(fake.prompts[9].text), /decision\/example/);
+    assert.match(String(fake.prompts[10].text), /memory_repair/);
+    assert.match(String(fake.prompts[10].text), /decision\/example/);
 
-    await fake.commands[9].execute({
+    await fake.commands[10].execute({
       sessionID: "ses_test",
       prompt: { text: "decision/example as=verified" },
       delivery: "steer",
     });
-    assert.match(String(fake.prompts[10].text), /memory_admin\.confirm/);
-    assert.match(String(fake.prompts[10].text), /human, test, or commit/);
+    assert.match(String(fake.prompts[11].text), /memory_admin\.confirm/);
+    assert.match(String(fake.prompts[11].text), /human, test, or commit/);
 
-    await fake.commands[10].execute({
+    await fake.commands[11].execute({
       sessionID: "ses_test",
       prompt: { text: "gotcha/example" },
       delivery: "steer",
     });
-    assert.match(String(fake.prompts[11].text), /memory_admin\.reject/);
+    assert.match(String(fake.prompts[12].text), /memory_admin\.reject/);
   });
 });

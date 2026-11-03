@@ -19,6 +19,15 @@ path-keyed databases remain readable and are adopted explicitly with
 `memory stabilize`, after which the plugin copies them on the next startup.
 Projects without a Git worktree fall back to the path-derived key.
 
+## Deterministic graph exports
+
+Graph visualization is a pure projection of the memory store, not a second data
+model. Nodes and edges are sorted canonically, keys are emitted in a fixed order,
+and exports contain no wall-clock timestamp or random layout. JSON, GraphML,
+DOT, and a single-file HTML explorer share that model. The HTML file embeds its
+data, styles, and vanilla JavaScript and makes no network requests, so it works
+offline through `file://`.
+
 ## Optimistic writes, earned injection
 
 Agents may write claims freely, but auto-injection is earned. `verified`,

@@ -41,6 +41,27 @@ export async function registerCommands(ctx: PluginContext): Promise<Registration
       });
 
       editor.add({
+        name: "goldfish-graph",
+        description:
+          "Export a deterministic JSON, GraphML, DOT, or offline HTML graph of project memory.",
+        execute: async ({ sessionID, prompt, delivery }) => {
+          const args = prompt.text.trim().replace(/\s+/g, " ").slice(0, 240);
+          const text = [
+            "Export the goldfish memory graph.",
+            args
+              ? `Requested arguments: ${args}`
+              : "Default: a self-contained offline HTML explorer at .opencode/memory/graph.html.",
+            "Call memory_export_graph. Supported formats: json, graphml, dot, html.",
+            "When no format is given, default to html. Pass through an output path when requested.",
+            "Map --active-only to activeOnly and --include-retired to includeRetired.",
+            "Do not run the CLI unless memory_export_graph is unavailable.",
+            "Report the exact output path, format, node count, edge count, and whether the result is a self-contained offline HTML file.",
+          ].join("\n");
+          await ctx.session.prompt({ ...prompt, sessionID, text, delivery });
+        },
+      });
+
+      editor.add({
         name: "goldfish-learn",
         description: "Extract durable, evidence-backed candidates from a session for human review.",
         execute: async ({ sessionID, prompt, delivery }) => {
