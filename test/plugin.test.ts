@@ -643,7 +643,11 @@ test("memory_status reports onboarding progress through empty, recommended, part
 
     const empty = await status();
     assert.match(empty.content, /Onboarding: empty/);
+    assert.match(empty.content, /Project ID: path-derived/);
+    assert.match(empty.content, /Database: .* \(explicit\)/);
     assert.equal(empty.metadata.onboardingRecommended, true);
+    assert.equal(empty.metadata.project.identity, "path");
+    assert.equal(empty.metadata.project.storeKind, "explicit");
 
     runtime.store.remember(
       {
@@ -923,6 +927,8 @@ test("skill registration reads the bundled skill and falls back when missing", a
     assert.equal(skill.id, "project-memory");
     assert.equal(skill.autoinvoke, true);
     assert.match(skill.content, /Before planning unfamiliar work/);
+    assert.match(skill.content, /memory stabilize/);
+    assert.match(skill.content, /path-derived/);
     assert.doesNotMatch(skill.content, /^---/);
   });
 
@@ -935,6 +941,8 @@ test("skill registration reads the bundled skill and falls back when missing", a
   assert.match(fallback.content, /memory_scan/);
   assert.match(fallback.content, /memory_learn/);
   assert.match(fallback.content, /memory_admin\.confirm/);
+  assert.match(fallback.content, /memory stabilize/);
+  assert.match(fallback.content, /path-derived/);
 });
 
 test("registerSkills registers the daily, onboarding, verification, repair, and learn skills", async () => {
@@ -952,6 +960,9 @@ test("registerSkills registers the daily, onboarding, verification, repair, and 
     assert.match(onboarding?.content ?? "", /suggest/i);
     assert.match(onboarding?.content ?? "", /Write nothing/);
     assert.match(onboarding?.content ?? "", /human, a reproducible test, or a commit/);
+    assert.match(onboarding?.content ?? "", /memory stabilize/);
+    assert.match(onboarding?.content ?? "", /moved or renamed/);
+    assert.match(onboarding?.content ?? "", /fresh clone is expected to start empty/i);
     const verification = byID.get("goldfish-verification");
     assert.equal(verification?.autoinvoke, true);
     assert.match(verification?.content ?? "", /memory_verify/);

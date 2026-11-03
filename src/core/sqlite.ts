@@ -17,6 +17,10 @@ export interface SqliteDatabase {
   close(): void;
 }
 
+export interface OpenSqliteOptions {
+  readOnly?: boolean;
+}
+
 function wrapBun(db: {
   exec(sql: string): void;
   prepare(sql: string): {
@@ -70,10 +74,15 @@ function wrapNode(db: {
  * The CLI and tests run on Node, where `node:sqlite` is built in from Node 22.
  * Keeping this adapter small means the core does not depend on either runtime.
  */
-export async function openSqlite(filename: string): Promise<SqliteDatabase> {
+export async function openSqlite(
+  filename: string,
+  options: OpenSqliteOptions = {},
+): Promise<SqliteDatabase> {
   try {
     const bun = await import("bun:sqlite");
-    const db = new bun.Database(filename);
+    const db = options.readOnly
+      ? new bun.Database(filename, { readonly: true } as never)
+      : new bun.Database(filename);
     db.exec("PRAGMA busy_timeout = 5000;");
     return wrapBun(db as never);
   } catch {
@@ -82,7 +91,9 @@ export async function openSqlite(filename: string): Promise<SqliteDatabase> {
 
   try {
     const node = await import("node:sqlite");
-    const db = new node.DatabaseSync(filename);
+    const db = options.readOnly
+      ? new node.DatabaseSync(filename, { readOnly: true } as never)
+      : new node.DatabaseSync(filename);
     db.exec("PRAGMA busy_timeout = 5000;");
     return wrapNode(db as never);
   } catch (error) {

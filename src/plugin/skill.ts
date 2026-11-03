@@ -40,6 +40,11 @@ This project has a local knowledge base exposed through the \`memory\` tools.
   call \`memory_scan\` to map manifests, entry points, docs, and candidate
   components without writing memory. If onboarding is empty or recommended,
   suggest \`/goldfish-onboard\`.
+- Check the project identity in \`memory_status\`. A stable Git ID lives in the
+  worktree's private git dir and survives moves; clones get new IDs. If the ID
+  is path-derived, suggest \`memory stabilize\`; restart OpenCode or \`/reload\` so
+  the plugin adopts legacy memory on its next startup. Never copy
+  \`memory.sqlite\` over a running plugin.
 - Use \`memory_health\` and \`memory_list\` for maintenance; use the
   \`memory_admin\` namespace for precise confirm/reject/cite/link/unlink/update/
   archive/conflict changes.
@@ -78,8 +83,12 @@ Use this when a project is new to goldfish or memory is empty.
 ## Guard
 
 If memory is empty and the user did not ask to onboard, suggest
-\`/goldfish-onboard\` and write nothing. If the user asks to get oriented, you may
-write the single cited \`concept/project-overview\` node, then ask before
+\`/goldfish-onboard\` and write nothing. If the project was moved or renamed and
+memory looks empty or path-derived, check \`memory_status\`, \`memory id\`, and
+\`memory projects\` before onboarding. Suggest \`memory stabilize\` rather than
+onboarding over an unmigrated legacy database. A fresh clone starts empty by
+design. If the user asks to get oriented,
+you may write the single cited \`concept/project-overview\` node, then ask before
 continuing. If the user invoked \`/goldfish-onboard\` or explicitly asked to
 onboard, run the bounded first pass. Use \`derived\` only for a claim whose
 premises are already cited or verified and linked with \`derived_from\`.

@@ -489,6 +489,7 @@ export interface ExportBundle {
   schemaVersion: number;
   exportedAt: string;
   projectRoot: string;
+  projectId?: string;
   nodes: MemoryNode[];
   versions: unknown[];
   edges: unknown[];

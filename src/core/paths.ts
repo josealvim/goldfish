@@ -32,8 +32,18 @@ export function projectKey(projectRoot: string): string {
   return shortHash(path.resolve(projectRoot));
 }
 
+/** Path-keyed database used before stable project identities. */
+export function legacyDbPath(projectRoot: string, root: string = dataRoot()): string {
+  return path.join(root, "projects", projectKey(projectRoot), "memory.sqlite");
+}
+
+/** Database for a stable project ID (a UUID stored in the Git worktree). */
+export function projectDbPath(projectId: string, root: string = dataRoot()): string {
+  return path.join(root, "projects", projectId, "memory.sqlite");
+}
+
 export function defaultDbPath(projectRoot: string): string {
-  return process.env.GOLDFISH_DB ?? path.join(dataRoot(), "projects", projectKey(projectRoot), "memory.sqlite");
+  return process.env.GOLDFISH_DB ?? legacyDbPath(projectRoot);
 }
 
 export function ensureParent(target: string): void {

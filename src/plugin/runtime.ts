@@ -1,6 +1,7 @@
 import { Plugin } from "@opencode/plugin";
-import { MemoryStore } from "../core/store.ts";
-import { defaultDbPath, ensureParent } from "../core/paths.ts";
+import type { MemoryStore } from "../core/store.ts";
+import { openProjectStore, type ProjectStoreKind } from "../core/project-store.ts";
+import type { ProjectIdentityKind } from "../core/project-identity.ts";
 import { parseInjectionPolicy, type InjectionPolicy } from "../core/policy.ts";
 import type { ConflictVerifier } from "../core/conflicts.ts";
 import { CompositeVerifier, DeterministicVerifier, type Verifier } from "../core/verification.ts";
@@ -13,6 +14,14 @@ export interface Runtime {
   ctx: PluginContext;
   store: MemoryStore;
   projectRoot: string;
+  projectKey: string;
+  projectId?: string;
+  identityKind: ProjectIdentityKind;
+  dbPath: string;
+  storeKind: ProjectStoreKind;
+  pendingStabilization: boolean;
+  pendingAdoption: boolean;
+  adoptionNote?: string;
   autoRecall: boolean;
   autoInject: boolean;
   requireWritePermission: boolean;
@@ -44,10 +53,15 @@ export async function createRuntime(ctx: PluginContext): Promise<Runtime> {
   const projectRoot = String(
     options.projectRoot ?? ctx.location.project?.canonical ?? ctx.location.directory,
   );
-  const dbPath = String(options.dbPath ?? defaultDbPath(projectRoot));
-  ensureParent(dbPath);
   const policy = parseInjectionPolicy(options.policy);
-  const store = await MemoryStore.open({ dbPath, projectRoot, policy });
+  const opened = await openProjectStore({
+    projectRoot,
+    ...(typeof options.dbPath === "string" ? { dbPath: options.dbPath } : {}),
+    createIdentity: true,
+    adopt: true,
+    policy,
+  });
+  const { store, resolution } = opened;
   const verificationOptions = (options.verification ?? {}) as Record<string, unknown>;
   const auditOptions = (options.audit ?? {}) as Record<string, unknown>;
   const conflictOptions = (options.conflict ?? {}) as Record<string, unknown>;
@@ -70,7 +84,17 @@ export async function createRuntime(ctx: PluginContext): Promise<Runtime> {
   return {
     ctx,
     store,
-    projectRoot,
+    projectRoot: resolution.projectRoot,
+    projectKey: resolution.identity.projectKey,
+    ...(resolution.identity.projectId ? { projectId: resolution.identity.projectId } : {}),
+    identityKind: resolution.identity.kind,
+    dbPath: resolution.dbPath,
+    storeKind: resolution.storeKind,
+    pendingStabilization: resolution.pendingStabilization,
+    pendingAdoption: resolution.pendingAdoption,
+    ...(resolution.note && (resolution.storeKind === "stable" || resolution.pendingAdoption)
+      ? { adoptionNote: resolution.note }
+      : {}),
     autoRecall: options.autoRecall !== false,
     autoInject: options.autoInject !== false,
     requireWritePermission: options.requireWritePermission === true,

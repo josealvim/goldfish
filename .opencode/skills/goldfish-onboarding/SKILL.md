@@ -40,6 +40,15 @@ If an overview-like concept exists under a different ID, use `supersedes` to
 replace it with the fixed `concept/project-overview` node. Do not create a
 second overview.
 
+If the project was moved or renamed recently and memory looks empty or
+path-derived, stop before onboarding. `memory_status` reports the active project
+identity; `memory id` and `memory projects` show the database paths. Suggest
+`memory stabilize` when a legacy path-keyed database needs to become a stable
+Git identity. The plugin adopts that database on the next startup. Do not onboard
+over an unmigrated database, and never copy `memory.sqlite` while OpenCode is
+running. A fresh clone is expected to start empty; carrying memory into a clone
+is an explicit import decision, not part of onboarding.
+
 ## 1. Bounded reconnaissance
 
 Read at most **12 files / 4,000 lines**. Use `memory_scan` to choose those files;

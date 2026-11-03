@@ -8,6 +8,9 @@ This project uses `goldfish`, a local project knowledge base.
   the paths you expect to touch. For an unfamiliar repository, call
   `memory_scan` first.
 - If memory is empty, suggest `/goldfish-onboard` before a large planning task.
+  If the project was moved or renamed, check the identity in `memory_status`
+  first; in a Git worktree, use `memory stabilize` to adopt a legacy path-keyed
+  database. Never copy `memory.sqlite` while OpenCode is running.
 - Use `memory_health` and `memory_list` for maintenance; precise edits go through
   the `memory_admin` namespace (confirm, reject, cite, link, unlink, update,
   archive, conflict).

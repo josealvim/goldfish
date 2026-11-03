@@ -1,19 +1,20 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { legacyDbPath } from "../src/core/paths.ts";
 
 const repoRoot = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const tsx = path.join(repoRoot, "node_modules", ".bin", "tsx");
 const cli = path.join(repoRoot, "src", "cli", "main.ts");
 
-function runCli(args: string[]) {
+function runCli(args: string[], env: NodeJS.ProcessEnv = process.env) {
   return spawnSync(tsx, [cli, ...args], {
     cwd: repoRoot,
-    env: process.env,
+    env,
     encoding: "utf8",
     timeout: 60_000,
   });
@@ -105,6 +106,57 @@ test("CLI end-to-end: seed, recall, eval, export/import, review, and audit", { t
 
     const audit = runCli(["audit", "--db", db, "--project", repoRoot]);
     assertOk(audit);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("CLI creates a stable project ID and adopts legacy memory", { timeout: 120_000 }, () => {
+  const root = mkdtempSync(path.join(tmpdir(), "goldfish-cli-stabilize-"));
+  const repo = path.join(root, "repo");
+  const data = path.join(root, "data");
+  mkdirSync(repo, { recursive: true });
+  const git = spawnSync("git", ["init", "-q", repo], { encoding: "utf8" });
+  assert.equal(git.status, 0, git.stderr ?? "");
+  const env: NodeJS.ProcessEnv = { ...process.env, OPENCODE_DATA_DIR: data };
+  delete env.GOLDFISH_DB;
+  const legacy = legacyDbPath(repo, data);
+  try {
+    const seeded = runCli(
+      ["seed", "test/fixtures/seed.jsonl", "--db", legacy, "--project", repo],
+      env,
+    );
+    assertOk(seeded);
+    assert.equal(existsSync(legacy), true);
+
+    const before = runCli(["id", "--project", repo], env);
+    assertOk(before);
+    assert.match(String(before.stdout), /Stable ID: not available/);
+    assert.match(String(before.stdout), /run `memory stabilize`/);
+
+    const stabilized = runCli(["stabilize", "--project", repo], env);
+    assertOk(stabilized);
+    assert.match(String(stabilized.stdout), /Created stable project ID:/);
+    assert.match(String(stabilized.stdout), /Adoption pending/);
+
+    const after = runCli(["id", "--project", repo], env);
+    assertOk(after);
+    assert.match(String(after.stdout), /Stable ID: [0-9a-f-]+/);
+    assert.match(String(after.stdout), /restart OpenCode/);
+
+    const adopted = runCli(["stabilize", "--now", "--project", repo], env);
+    assertOk(adopted);
+    assert.match(String(adopted.stdout), /Adopted 12 node/);
+
+    const stats = runCli(["stats", "--project", repo], env);
+    assertOk(stats);
+    assert.match(String(stats.stdout), /Nodes: 12/);
+
+    const projects = runCli(["projects", "--project", repo], env);
+    assertOk(projects);
+    assert.match(String(projects.stdout), /stable/);
+    assert.match(String(projects.stdout), /legacy/);
+    assert.equal(existsSync(legacy), true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

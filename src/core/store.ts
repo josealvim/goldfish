@@ -60,6 +60,11 @@ import {
 import { anyScopeMatches, scopeMatchScore } from "./glob.ts";
 import { DEFAULT_POLICY, effectiveAllowedBasis, isAutoInjectEligible, type InjectionPolicy } from "./policy.ts";
 import { initSchema } from "./schema.ts";
+import { ensureParent } from "./paths.ts";
+import {
+  cloneMemoryInto,
+  type CloneMemoryResult,
+} from "./relocate.ts";
 import { transaction, type SqliteDatabase, type SqlValue } from "./sqlite.ts";
 import { estimateTokens, formatCardText } from "./format.ts";
 import { buildCitationSnapshot, type SourceSnapshotOptions } from "./sources.ts";
@@ -69,7 +74,9 @@ type Row = Record<string, unknown>;
 
 export interface MemoryStoreOptions {
   db: SqliteDatabase;
+  dbPath?: string;
   projectRoot: string;
+  projectId?: string;
   policy?: InjectionPolicy;
   now?: () => Date;
   maxBodyCharacters?: number;
@@ -78,6 +85,7 @@ export interface MemoryStoreOptions {
 export interface OpenMemoryStoreOptions {
   dbPath: string;
   projectRoot: string;
+  projectId?: string;
   policy?: InjectionPolicy;
   now?: () => Date;
   maxBodyCharacters?: number;
@@ -95,6 +103,8 @@ const DEFAULT_MAX_BODY_CHARACTERS = 6000;
 
 export class MemoryStore {
   readonly projectRoot: string;
+  readonly projectId?: string;
+  readonly dbPath: string;
   readonly policy: InjectionPolicy;
   private readonly db: SqliteDatabase;
   private readonly nowFn: () => Date;
@@ -102,18 +112,23 @@ export class MemoryStore {
 
   constructor(options: MemoryStoreOptions) {
     this.db = options.db;
+    this.dbPath = options.dbPath ?? ":memory:";
     this.projectRoot = path.resolve(options.projectRoot);
+    this.projectId = options.projectId;
     this.policy = options.policy ?? DEFAULT_POLICY;
     this.nowFn = options.now ?? (() => new Date());
     this.maxBodyCharacters = options.maxBodyCharacters ?? DEFAULT_MAX_BODY_CHARACTERS;
   }
 
   static async open(options: OpenMemoryStoreOptions): Promise<MemoryStore> {
+    ensureParent(options.dbPath);
     const { openSqlite } = await import("./sqlite.ts");
     const db = await openSqlite(options.dbPath);
     const store = new MemoryStore({
       db,
+      dbPath: options.dbPath,
       projectRoot: options.projectRoot,
+      projectId: options.projectId,
       policy: options.policy,
       now: options.now,
       maxBodyCharacters: options.maxBodyCharacters,
@@ -123,7 +138,25 @@ export class MemoryStore {
   }
 
   init(): void {
-    initSchema(this.db);
+    initSchema(this.db, {
+      projectRoot: this.projectRoot,
+      projectId: this.projectId,
+    });
+  }
+
+  cloneFrom(
+    sourceDbPath: string,
+    options: { sourceProjectRoot?: string; dryRun?: boolean } = {},
+  ): CloneMemoryResult {
+    return cloneMemoryInto(this.db, {
+      dbPath: this.dbPath,
+      projectRoot: this.projectRoot,
+      projectId: this.projectId,
+      sourceDbPath,
+      ...(options.sourceProjectRoot ? { sourceProjectRoot: options.sourceProjectRoot } : {}),
+      ...(options.dryRun ? { dryRun: true } : {}),
+      now: this.nowFn,
+    });
   }
 
   close(): void {
@@ -2312,6 +2345,7 @@ export class MemoryStore {
       schemaVersion: 1,
       exportedAt: this.now(),
       projectRoot: this.projectRoot,
+      ...(this.projectId ? { projectId: this.projectId } : {}),
       nodes,
       versions: this.db.prepare("SELECT * FROM node_versions ORDER BY node_id, version").all(),
       edges: this.db.prepare("SELECT * FROM edges ORDER BY from_id, to_id, type").all(),

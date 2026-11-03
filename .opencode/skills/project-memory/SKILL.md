@@ -18,6 +18,30 @@ components without writing memory. If onboarding is `empty` or `recommended`,
 suggest `/goldfish-onboard`. If it is `partial`, suggest filling the missing
 categories. Do not run a full onboarding pass unless the user asks.
 
+## Project identity and moving the repository
+
+Goldfish stores a stable project ID in the Git worktree's private git
+directory, under `goldfish/projects/<relative-path-hash>/id`. A normal move or
+rename preserves it; a new clone gets its own identity. `memory_status` reports
+the active identity and database path.
+
+- If status reports a path-derived ID and Git is available, run
+  `memory stabilize` once from the goldfish checkout (for example,
+  `npm run memory -- stabilize`), then restart OpenCode or run `/reload`. The
+  plugin adopts the legacy database on its next startup, before the session
+  writes anything.
+- `memory stabilize --now` copies immediately. Use it only when OpenCode is
+  closed, or restart OpenCode immediately afterward. `--from-db <path>` adopts
+  a specific orphaned database with `--now`.
+- `memory id` shows the stable ID, legacy key, active database, and pending
+  migration. `memory projects` lists known project databases. Use the same
+  project root OpenCode uses, or pass `--project <dir>` when in doubt.
+- Do not copy `memory.sqlite` over a running OpenCode plugin. The plugin keeps
+  the database connection open, so file replacement can lose writes or leave
+  the WAL inconsistent.
+- Projects without a Git worktree fall back to a path-derived key. Use the
+  plugin `dbPath` option or `GOLDFISH_DB` when such a project must be move-safe.
+
 ## Maintenance
 
 Use `memory_health` to find uncited, stale, disputed, orphaned, low-confidence,

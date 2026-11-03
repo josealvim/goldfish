@@ -592,6 +592,25 @@ const auditSchema = {
   additionalProperties: false,
 } as const;
 
+function formatProjectStorage(runtime: Runtime): string {
+  const lines = [
+    runtime.projectId
+      ? `Project ID: ${runtime.projectId} (stable Git identity)`
+      : `Project ID: path-derived (legacy key ${runtime.projectKey})`,
+    `Database: ${runtime.dbPath} (${runtime.storeKind})`,
+  ];
+  if (runtime.pendingStabilization) {
+    lines.push(
+      "Migration: a stable ID is available. Run `memory stabilize` in the goldfish checkout, then restart OpenCode or run /reload.",
+    );
+  }
+  if (runtime.pendingAdoption) {
+    lines.push("Migration: stable ID adoption pending. Restart OpenCode (or run /reload).");
+  }
+  if (runtime.adoptionNote) lines.push(`Migration note: ${runtime.adoptionNote}`);
+  return lines.join("\n");
+}
+
 export async function registerTools(ctx: PluginContext, runtime: Runtime): Promise<Registration> {
   return ctx.tool.transform((editor) => {
     editor.namespace({
@@ -758,16 +777,28 @@ export async function registerTools(ctx: PluginContext, runtime: Runtime): Promi
     editor.add({
       name: "status",
       description:
-        "Show project memory coverage and whether onboarding is recommended. Use before a large planning " +
-        "task or when checking whether the project has been onboarded. Reports counts by kind, basis, and " +
-        "status, plus the fixed project-overview node.",
+        "Show project memory coverage, project identity, and database path, and whether onboarding is " +
+        "recommended. Use before a large planning task or when checking whether the project has been " +
+        "onboarded or moved. Reports counts by kind, basis, and status, plus the fixed project-overview node.",
       input: statusSchema,
       options: { namespace: "memory", codemode: false },
       execute: async () => {
         const status = runtime.store.status();
         return {
-          content: formatMemoryStatus(status),
-          metadata: status,
+          content: `${formatMemoryStatus(status)}\n\n${formatProjectStorage(runtime)}`,
+          metadata: {
+            ...status,
+            project: {
+              key: runtime.projectKey,
+              ...(runtime.projectId ? { id: runtime.projectId } : {}),
+              identity: runtime.identityKind,
+              database: runtime.dbPath,
+              storeKind: runtime.storeKind,
+              pendingStabilization: runtime.pendingStabilization,
+              pendingAdoption: runtime.pendingAdoption,
+              ...(runtime.adoptionNote ? { note: runtime.adoptionNote } : {}),
+            },
+          },
         };
       },
     });

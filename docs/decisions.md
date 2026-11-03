@@ -12,6 +12,13 @@ retrieval, and it avoids running a separate graph database or vector service.
 Curated knowledge can be exported as a deterministic JSONL bundle for review,
 backup, or sharing. The SQLite file itself is never committed.
 
+A Git project's stable key is a UUID stored in the worktree's private git
+directory, keyed by the project's path relative to the worktree root. Moving or
+renaming the repository preserves it; cloning creates a new identity. Legacy
+path-keyed databases remain readable and are adopted explicitly with
+`memory stabilize`, after which the plugin copies them on the next startup.
+Projects without a Git worktree fall back to the path-derived key.
+
 ## Optimistic writes, earned injection
 
 Agents may write claims freely, but auto-injection is earned. `verified`,

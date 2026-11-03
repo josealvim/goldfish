@@ -43,7 +43,7 @@ No npm publish is required. The package is installed directly from Git.
 opencode plugin add github:josealvim/goldfish
 
 # Pin a release tag
-opencode plugin add github:josealvim/goldfish#v0.11.0
+opencode plugin add github:josealvim/goldfish#v0.12.0
 ```
 
 Or clone the repository and run the installer:
@@ -91,10 +91,45 @@ opencode plugin list
 The plugin uses one SQLite database per project:
 
 ```text
-~/.local/share/opencode/projects/<project-key>/memory.sqlite
+~/.local/share/opencode/projects/<project-id>/memory.sqlite
 ```
 
-Override it with `--db` or `GOLDFISH_DB`.
+Git projects get a stable project ID stored in the worktree's private git
+directory; legacy databases used a path-derived key. The ID file is
+`<git-dir>/goldfish/projects/<relative-path-hash>/id`; it is local metadata
+inside `.git` and is never committed. New projects create it automatically on
+first open; existing path-keyed databases keep using the legacy key until you run
+`memory stabilize`. Override the database path with `--db` or `GOLDFISH_DB`;
+an explicit path bypasses stable identity selection.
+
+### Moving or renaming a project
+
+A normal filesystem move or rename preserves the stable Git project ID, so the
+same database keeps serving the project. A fresh `git clone` gets a new ID and
+starts with a new database; this keeps separate working copies independent.
+Copying a repository including its `.git` directory also copies the identity.
+Worktrees get independent IDs because the ID lives in each worktree's private
+git directory.
+
+If you already have a path-keyed database from an older goldfish version, run:
+
+```sh
+npm run memory -- id          # show the stable ID, legacy key, and database paths
+npm run memory -- stabilize   # create the stable ID and schedule adoption
+```
+
+Then restart OpenCode (or run `/reload`). The plugin adopts the legacy database
+on startup, before the session writes anything. The legacy database is left in
+place as a backup. `memory stabilize --now` copies immediately; use it with
+OpenCode closed, or restart OpenCode immediately afterward. If `memory id`
+warns that the legacy database has newer updates, export it explicitly and
+import it into the stable database rather than replacing files.
+
+`memory projects` lists known project databases, including inactive legacy
+databases. Run identity commands from the same project root OpenCode uses, or
+pass `--project <dir>` when in doubt. Projects without a Git worktree keep using
+a path-derived key; use the plugin `dbPath` option or `GOLDFISH_DB` when those
+must be move-safe.
 
 ## Develop in this repository
 
@@ -115,7 +150,7 @@ npm run memory -- recall "how does injection work?"
 | `memory_remember` | Propose a durable claim with citations and optional graph links. Deduplicates and detects conflicts. |
 | `memory_get` | Read a node in full, including citations, relationships, and version history. |
 | `memory_neighbors` | Walk the knowledge graph one or two hops. |
-| `memory_status` | Show memory coverage and whether onboarding is recommended. |
+| `memory_status` | Show memory coverage, project identity, database path, and whether onboarding is recommended. |
 | `memory_scan` | Read-only structural scan: layout, manifests, scripts, candidate components, entry points, docs headings, CI, and Git metadata. |
 | `memory_learn` | Read a bounded, redacted digest of user and assistant session text. Read-only. |
 | `memory_stage_learning` | Stage the full session-learning candidate list in a local review file without writing memory. |
@@ -332,11 +367,17 @@ npm run memory -- recall "billing outbox" --scope services/billing --limit 5
 npm run memory -- remember --json ./claim.json
 
 # Inspect
+npm run memory -- id
+npm run memory -- projects
 npm run memory -- get decision/use-sqlite-with-fts5-for-project-memory
 npm run memory -- neighbors decision/use-sqlite-with-fts5-for-project-memory --depth 2
 npm run memory -- list --kind decision --status active --limit 20
 npm run memory -- health
 npm run memory -- stats
+
+# Stabilize a legacy database after upgrading
+npm run memory -- stabilize
+npm run memory -- stabilize --now   # with OpenCode closed
 
 # Review and quality loop
 npm run memory -- review
@@ -621,6 +662,9 @@ The core has no OpenCode imports. The plugin is an adapter over the same
 - Import merges the current node state and preserves citations and edges, but it
   does not replay historical versions or carry audit/conflict-proposal review
   state.
+- Stable project IDs survive local moves and renames of a Git worktree. A clone
+  gets a new identity by design, and the database does not travel with the
+  repository to another machine or data directory.
 - Local-first only. There is no team sync or shared service.
 
 ## Development
@@ -631,14 +675,15 @@ npm test
 npm run seed
 ```
 
-The 85 tests cover policy and glob matching, recall filters and budgets,
+The test suite covers policy and glob matching, recall filters and budgets,
 material revisions and supersession, multi-conflict forks, bounded source
 snapshots and redaction, citation freshness, derived cycles and premise
 soundness, verifier verdicts and caching, conflict candidate retrieval,
 proposal lifecycle, conflict confirmation, audit sampling and outcomes,
-export/import round-trips, observe/edit operations, plugin tool registration,
-auto-recall and fallback hooks, skill and command registration, onboarding
-status, and CLI end-to-end and error paths.
+export/import round-trips, stable project identity and legacy adoption,
+observe/edit operations, plugin tool registration, auto-recall and fallback
+hooks, skill and command registration, onboarding status, and CLI end-to-end and
+error paths.
 
 ## Safety
 

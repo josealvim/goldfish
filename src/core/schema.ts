@@ -164,12 +164,20 @@ CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts USING fts5(
 );
 `;
 
-export function initSchema(db: SqliteDatabase): void {
+export interface SchemaInitOptions {
+  projectRoot?: string;
+  projectId?: string;
+}
+
+export function initSchema(db: SqliteDatabase, options: SchemaInitOptions = {}): void {
   db.exec("PRAGMA foreign_keys = ON;");
   db.exec("PRAGMA journal_mode = WAL;");
   db.exec(SCHEMA_SQL);
-  db.prepare(
+  const setMeta = db.prepare(
     `INSERT INTO schema_meta(key, value) VALUES(?, ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-  ).run("version", String(SCHEMA_VERSION));
+  );
+  setMeta.run("version", String(SCHEMA_VERSION));
+  if (options.projectRoot) setMeta.run("project_root", options.projectRoot);
+  if (options.projectId) setMeta.run("project_id", options.projectId);
 }

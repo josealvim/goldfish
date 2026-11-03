@@ -2,7 +2,18 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { MemoryStore } from "../core/store.ts";
-import { defaultDbPath, ensureParent, findProjectRoot } from "../core/paths.ts";
+import { findProjectRoot, legacyDbPath, projectDbPath } from "../core/paths.ts";
+import {
+  inspectProjectDb,
+  listProjectDbs,
+  openProjectStore,
+  resolveProjectStore,
+  type ProjectStoreResolution,
+} from "../core/project-store.ts";
+import {
+  gitProjectAnchor,
+  resolveProjectIdentity,
+} from "../core/project-identity.ts";
 import { importBundle, type ImportBundle } from "../core/import.ts";
 import {
   formatMemoryHealth,
@@ -84,13 +95,197 @@ function numberFlag(args: ParsedArgs, name: string): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-async function withStore<T>(args: ParsedArgs, callback: (store: MemoryStore, projectRoot: string) => T | Promise<T>): Promise<T> {
-  const projectRoot = path.resolve(flag(args, "project") ?? findProjectRoot(process.cwd()));
-  const dbPath = flag(args, "db") ?? defaultDbPath(projectRoot);
-  ensureParent(dbPath);
-  const store = await MemoryStore.open({ dbPath, projectRoot });
+function projectRootFrom(args: ParsedArgs): string {
+  return path.resolve(flag(args, "project") ?? findProjectRoot(process.cwd()));
+}
+
+async function withStore<T>(
+  args: ParsedArgs,
+  callback: (store: MemoryStore, projectRoot: string) => T | Promise<T>,
+): Promise<T> {
+  const projectRoot = projectRootFrom(args);
+  const opened = await openProjectStore({
+    projectRoot,
+    ...(flag(args, "db") ? { dbPath: flag(args, "db") } : {}),
+    createIdentity: true,
+    adopt: false,
+  });
   try {
-    return await callback(store, projectRoot);
+    return await callback(opened.store, opened.resolution.projectRoot);
+  } finally {
+    opened.store.close();
+  }
+}
+
+function formatProjectResolution(resolution: ProjectStoreResolution): string {
+  const lines = [
+    `Project root: ${resolution.projectRoot}`,
+    `Legacy key: ${resolution.identity.projectKey}`,
+  ];
+  if (resolution.identity.kind === "git" && resolution.identity.projectId) {
+    lines.push(`Stable ID: ${resolution.identity.projectId}`);
+    if (resolution.identity.anchor) {
+      lines.push(`Git directory: ${resolution.identity.anchor.gitDir}`);
+      lines.push(`Git-relative project path: ${resolution.identity.anchor.relativePath}`);
+    }
+  } else {
+    lines.push(
+      `Stable ID: not available${resolution.identity.reason ? ` (${resolution.identity.reason})` : ""}`,
+    );
+  }
+  lines.push(`Active database: ${resolution.dbPath} (${resolution.storeKind})`);
+  if (existsSync(resolution.legacyDbPath)) {
+    lines.push(
+      `Legacy database: ${resolution.legacyDbPath} (${resolution.legacyNodes} node${resolution.legacyNodes === 1 ? "" : "s"}${resolution.legacyError ? ", unreadable" : ""})`,
+    );
+  }
+  if (resolution.stableDbPath) {
+    lines.push(
+      existsSync(resolution.stableDbPath)
+        ? `Stable database: ${resolution.stableDbPath} (${resolution.stableNodes} node${resolution.stableNodes === 1 ? "" : "s"}${resolution.stableError ? ", unreadable" : ""})`
+        : `Stable database: ${resolution.stableDbPath} (not created)`,
+    );
+  }
+  if (resolution.pendingStabilization) {
+    lines.push("Action: run `memory stabilize` to make this project move-safe.");
+  }
+  if (resolution.pendingAdoption) {
+    lines.push("Action: restart OpenCode (or run /reload) to adopt the legacy database.");
+  }
+  if (resolution.note) lines.push(`Note: ${resolution.note}`);
+  return lines.join("\n");
+}
+
+function nodeWord(count: number): string {
+  return `${count} node${count === 1 ? "" : "s"}`;
+}
+
+async function printProjects(args: ParsedArgs): Promise<void> {
+  const projectRoot = projectRootFrom(args);
+  const active = await resolveProjectStore({
+    projectRoot,
+    ...(flag(args, "db") ? { dbPath: flag(args, "db") } : {}),
+    createIdentity: false,
+  });
+  const activePath = active.dbPath === ":memory:" ? active.dbPath : path.resolve(active.dbPath);
+  const records = await listProjectDbs();
+  if (!records.length) {
+    console.log("No project databases found.");
+    return;
+  }
+  console.log("Project databases:");
+  for (const record of records) {
+    const marker = path.resolve(record.dbPath) === activePath ? "*" : " ";
+    const root = record.projectRoot ?? "unknown root";
+    const updated = record.updatedAt ?? "unknown update time";
+    const error = record.error ? ` [${record.error}]` : "";
+    console.log(
+      `${marker} ${record.kind.padEnd(7)} ${nodeWord(record.nodes).padEnd(10)} ${record.key}  ${root}  ${updated}${error}`,
+    );
+  }
+  console.log("\n* = active database for this project.");
+}
+
+async function stabilize(args: ParsedArgs): Promise<void> {
+  const projectRoot = projectRootFrom(args);
+  const dryRun = boolFlag(args, "dry-run");
+  const now = boolFlag(args, "now");
+  const fromDb = flag(args, "from-db");
+  if (flag(args, "db") || process.env.GOLDFISH_DB) {
+    throw new Error(
+      "stabilize uses the standard stable database path; unset --db/GOLDFISH_DB first.",
+    );
+  }
+  if (fromDb && !now) {
+    throw new Error("--from-db requires --now so the adoption source is explicit.");
+  }
+
+  const anchor = gitProjectAnchor(projectRoot);
+  if (!anchor) {
+    throw new Error(
+      "Stable project IDs require a Git worktree. Use --db/GOLDFISH_DB to pin a database path instead.",
+    );
+  }
+
+  let identity = resolveProjectIdentity(projectRoot, { create: false });
+  let stableId = identity.projectId;
+  if (!stableId) {
+    if (dryRun) {
+      console.log(`Would create a stable project ID at ${anchor.idPath}`);
+      console.log(`Legacy database: ${legacyDbPath(projectRoot)}`);
+      return;
+    }
+    identity = resolveProjectIdentity(projectRoot, { create: true });
+    stableId = identity.projectId;
+    if (identity.kind !== "git" || !stableId) {
+      throw new Error(identity.reason ?? "Could not create a stable project ID.");
+    }
+    console.log(`Created stable project ID: ${stableId}`);
+  } else {
+    console.log(`Stable project ID: ${stableId}`);
+  }
+
+  const stablePath = projectDbPath(stableId);
+  const sourcePath = fromDb ? path.resolve(fromDb) : legacyDbPath(projectRoot);
+  if (sourcePath === stablePath) {
+    throw new Error("The source and target databases are the same.");
+  }
+
+  const source = await inspectProjectDb(sourcePath);
+  const target = await inspectProjectDb(stablePath);
+  if (fromDb && !source.exists) {
+    throw new Error(`No source database found at ${sourcePath}`);
+  }
+  console.log(
+    `Source database: ${sourcePath} (${nodeWord(source.nodes)}${source.error ? ", unreadable" : ""})`,
+  );
+  console.log(
+    `Target database: ${stablePath} (${nodeWord(target.nodes)}${target.error ? ", unreadable" : ""})`,
+  );
+
+  if (target.nodes > 0) {
+    console.log("Stable database already contains memory; nothing to adopt.");
+    return;
+  }
+  if (source.error && source.nodes === 0) {
+    throw new Error(`Could not inspect the source database: ${source.error}`);
+  }
+  if (!source.exists || source.nodes === 0) {
+    if (dryRun) {
+      console.log("Would initialize an empty stable database.");
+      return;
+    }
+    const store = await MemoryStore.open({ dbPath: stablePath, projectRoot, projectId: stableId });
+    store.close();
+    console.log("Stable database initialized; there was no legacy memory to adopt.");
+    return;
+  }
+  if (!now) {
+    if (dryRun) {
+      console.log(`Would adopt ${nodeWord(source.nodes)} on the next OpenCode startup.`);
+      return;
+    }
+    console.log(
+      "Adoption pending. Restart OpenCode (or run /reload); the plugin copies the legacy database before the next session writes.",
+    );
+    return;
+  }
+
+  if (dryRun) {
+    console.log(`Would adopt ${nodeWord(source.nodes)} into the stable database.`);
+    return;
+  }
+
+  console.log(
+    "Copying through SQLite. If OpenCode is running, restart it immediately after this command.",
+  );
+  const store = await MemoryStore.open({ dbPath: stablePath, projectRoot, projectId: stableId });
+  try {
+    const result = store.cloneFrom(sourcePath, { sourceProjectRoot: projectRoot });
+    console.log(
+      `Adopted ${nodeWord(result.nodes)}, ${result.versions} version(s), ${result.edges} edge(s), and ${result.events} event(s).`,
+    );
+    console.log("Legacy database left in place as a backup. Restart OpenCode or run /reload.");
   } finally {
     store.close();
   }
@@ -144,6 +339,28 @@ async function main(): Promise<void> {
     case "-h":
       printHelp();
       return;
+
+    case "id": {
+      const projectRoot = projectRootFrom(args);
+      const resolution = await resolveProjectStore({
+        projectRoot,
+        ...(flag(args, "db") ? { dbPath: flag(args, "db") } : {}),
+        createIdentity: false,
+      });
+      console.log(formatProjectResolution(resolution));
+      return;
+    }
+
+    case "projects": {
+      await printProjects(args);
+      return;
+    }
+
+    case "stabilize":
+    case "migrate-id": {
+      await stabilize(args);
+      return;
+    }
 
     case "seed": {
       const file = args.positionals[0] ?? "test/fixtures/seed.jsonl";
@@ -368,6 +585,7 @@ async function main(): Promise<void> {
               schemaVersion: bundle.schemaVersion,
               exportedAt: bundle.exportedAt,
               projectRoot: bundle.projectRoot,
+              ...(bundle.projectId ? { projectId: bundle.projectId } : {}),
               counts: {
                 nodes: bundle.nodes.length,
                 versions: bundle.versions.length,
@@ -476,6 +694,11 @@ Usage:
   memory <command> [options]
 
 Commands:
+  id                              Show project identity and database paths
+  projects                        List project databases
+  stabilize [--now] [--from-db <path>]
+                                  Create a stable Git project ID; adopt legacy memory
+                                  (alias: migrate-id)
   seed [file]                     Load memory proposals from JSONL
   recall <query>                  Search project memory
   remember --json <file-or-json>  Propose a memory node
@@ -497,6 +720,9 @@ Commands:
 Common options:
   --project <dir>                 Project root (default: nearest marker)
   --db <path>                     SQLite path (default: OpenCode data directory)
+  --now                           Copy legacy memory immediately during stabilize
+  --from-db <path>                Adopt a specific database during stabilize --now
+  --dry-run                       Show what stabilize would do
   --scope <glob>                  Scope filter (repeatable)
   --limit <n>                     Result limit
   --budget <tokens>               Approximate token budget
